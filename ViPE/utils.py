@@ -6,10 +6,11 @@ import librosa
 import pandas as pd
 import os
 import sys
+import cv2
 from transformers import GPT2LMHeadModel, GPT2Tokenizer
 from .generation import generate_from_sentences
 from .semantic_similarity_eval import mpnet_embed_class
-from moviepy.editor import VideoFileClip, AudioFileClip
+from moviepy import VideoFileClip, TextClip, CompositeVideoClip
 from googletrans import Translator
 
 class dotdict(dict):
@@ -578,10 +579,7 @@ def get_visual_effects(audio_intensity, fps_p,visual_affect_chunk,mode):
     return {'zooms':zooms, 'x_translations':tr_xs, 'y_translation':tr_ys, 'angles':angles}
 
 
-from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip
 
-import cv2
-import numpy as np
 
 # Function to wrap text into lines with a given number of words per line
 def wrap_text_to_lines(text, max_words_per_line,caption_mode,Vipe=True):
