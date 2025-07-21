@@ -10,7 +10,7 @@ import cv2
 from transformers import GPT2LMHeadModel, GPT2Tokenizer
 from .generation import generate_from_sentences
 from .semantic_similarity_eval import mpnet_embed_class
-from moviepy import VideoFileClip, TextClip, CompositeVideoClip
+from moviepy import VideoFileClip, TextClip, CompositeVideoClip, AudioFileClip
 from googletrans import Translator
 
 class dotdict(dict):
