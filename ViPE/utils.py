@@ -799,7 +799,7 @@ def add_audio_to_mp4(mp4_path, mp3_path, output_path):
     audio_clip = AudioFileClip(mp3_path)
 
     # Set the audio of the video clip to the loaded audio clip
-    video_clip = video_clip.set_audio(audio_clip)
+    video_clip = video_clip.with_audio(audio_clip)
 
     # Get the audio codec and bitrate from the input audio clip
     # Get the audio codec and bitrate from the input audio clip
