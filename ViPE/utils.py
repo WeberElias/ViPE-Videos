@@ -82,6 +82,8 @@ def get_concreteness(prompts, word2score):
 
     return scores
 
+
+
 def get_lyrtic2prompts(args):
 
     # if the prompt_file does not exist, generate it again
@@ -228,6 +230,77 @@ def get_lyrtic2prompts(args):
 
     return lyric2prompt
 
+class Character:
+    """A character object that tracks character information and in which lines they appear"""
+    
+    def __init__(self, description, line_occurrences=None, regularization_images=None, training_images=None):
+        """
+        Initialize a Character object
+        
+        Args:
+            description (str): Description of the character
+            line_occurrences (list): List of integers representing line numbers where character appears
+            regularization_images (str): Path to the regularization images
+            training_images (str): Path to the training images
+        """
+        self.description = description
+        self.line_occurrences = line_occurrences if line_occurrences is not None else []
+        self.regularization_images = regularization_images
+        self.training_images = training_images
+    
+    def add_occurrence(self, line_number):
+        """Add a line number where this character appears"""
+        if line_number not in self.line_occurrences:
+            self.line_occurrences.append(line_number)
+            self.line_occurrences.sort()  # Sort occurrences
+    
+    def remove_occurrence(self):
+        """Remove the very first occurrence from line_occurrences"""
+        if self.line_occurrences:
+            self.line_occurrences.pop(0)
+    
+    def appears_in_line(self, line_number):
+        """Check if character appears in a specific line"""
+        return line_number in self.line_occurrences
+    
+    def to_dict(self):
+        """Return a dictionary representation of the Character object."""
+        return {
+            'description': self.description,
+            'line_occurrences': self.line_occurrences,
+            'regularization_images': self.regularization_images,
+            'training_images': self.training_images
+        }
+            def set_training_images_path(self, path):
+        """Set the path to training images for this character"""
+        self.training_images = path
+    
+    def set_regularization_images_path(self, path):
+        """Set the path to regularization images for this character"""
+        self.regularization_images = path
+    
+    def get_training_images_path(self):
+        """Get the path to training images for this character"""
+        return self.training_images
+    
+    def get_regularization_images_path(self):
+        """Get the path to regularization images for this character"""
+        return self.regularization_images
+
+# generate characters using the ViPE interpretation and adjust the interpretation
+def get_characters(lyric2prompt):
+
+    #ask an AI to generate characters
+
+    #generate character objects for it
+        #description
+        #occurences
+        #ask for training images or get them using get_training_images
+        #ask for regularization images, generate them or use public sets
+    
+    #adjust ViPE interpretations
+
+    return list_of_characters
 
 def compute_rms(audio, sr, start_time, duration):
     # Extract the segment from the loaded audio

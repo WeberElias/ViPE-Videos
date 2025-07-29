@@ -8,7 +8,7 @@ import argparse
 import torch
 import clip
 import random
-from ViPE.utils import dotdict, get_lyrtic2prompts, get_track_intensity, get_visual_effects, get_visual_effects_disco
+from ViPE.utils import dotdict, get_lyrtic2prompts, get_track_intensity, get_visual_effects, get_visual_effects_disco, Character
 from ViPE.utils import add_audio_to_mp4, add_captions_to_video
 import subprocess
 import time, gc, os, sys
@@ -115,6 +115,7 @@ def main():
     my_args.use_init = False
     my_args.use_visual_effect = False if user_args.skip_visual_effect else True
     my_args.checkpoint = user_args.vipe_checkpoint
+    my_arg.characters = '{}{}characters'.format(mp3_dir, mp3_name)
 
     fps_p = 15  # generate fps_p frames per seconds for each prompts
     visual_affect_chunk = user_args.visual_effect_period  # for how many seconds each visualization affect should last
@@ -124,6 +125,13 @@ def main():
     lyric2prompt = get_lyrtic2prompts(my_args)
     torch.cuda.empty_cache()
 
+    #TODO
+    # generate characters and adjust prompts
+    # characters = get_characters(lyric2prompt)
+
+    # train diffusionmodels using dreambooth
+
+    
     animation_prompts = {}
     name = 'test_{}_rews_{}_{}fps_{}ctx_{}_vipe_{}_abst_{}'.format(my_args.animation_mode, my_args.n_img_reward_samples,
                                                                    fps_p, my_args.context_size, mp3_name,
