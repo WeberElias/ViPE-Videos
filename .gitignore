@@ -160,4 +160,4 @@ cython_debug/
 #.idea/
 
 # Audiofiles, transcriptions and interpretations
-.mp3/
+mp3/
