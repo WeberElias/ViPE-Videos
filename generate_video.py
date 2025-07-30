@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 
 # os.environ['CUDA_VISIBLE_DEVICES'] = "1"
 sys.path.extend([os.getcwd() + '/src/'])
@@ -8,7 +9,7 @@ import argparse
 import torch
 import clip
 import random
-from ViPE.utils import dotdict, get_lyrtic2prompts, get_track_intensity, get_visual_effects, get_visual_effects_disco, Character
+from ViPE.utils import dotdict, get_lyrtic2prompts, get_track_intensity, get_visual_effects, get_visual_effects_disco #, Character
 from ViPE.utils import add_audio_to_mp4, add_captions_to_video
 import subprocess
 import time, gc, os, sys
@@ -18,6 +19,8 @@ from helpers.settings import load_args
 from helpers.render import render_animation, render_input_video, render_image_batch, render_interpolation
 from helpers.model_load import load_model, get_model_output_paths
 from helpers.aesthetics import load_aesthetics_model
+from helpers.gemini_api import setup_gemini, generate_characters
+
 
 
 def parse_args():
@@ -115,7 +118,7 @@ def main():
     my_args.use_init = False
     my_args.use_visual_effect = False if user_args.skip_visual_effect else True
     my_args.checkpoint = user_args.vipe_checkpoint
-    my_arg.characters = '{}{}characters'.format(mp3_dir, mp3_name)
+    #my_args.characters = '{}{}characters'.format(mp3_dir, mp3_name)
 
     fps_p = 15  # generate fps_p frames per seconds for each prompts
     visual_affect_chunk = user_args.visual_effect_period  # for how many seconds each visualization affect should last
@@ -126,7 +129,31 @@ def main():
     torch.cuda.empty_cache()
 
     #TODO
-    # generate characters and adjust prompts
+    # Generate characters and update prompts using Gemini
+    try:
+        gemini_model = setup_gemini()
+        success, updated_prompts_path, characters_path = generate_characters(
+            gemini_model, 
+            my_args.prompt_file, 
+            mp3_dir
+        )
+        
+        if success:
+            print(f"Character generation completed:")
+            print(f"  Updated prompts saved to: {updated_prompts_path}")
+            print(f"  Characters saved to: {characters_path}")
+            
+            # Load the updated prompts to use in the video generation
+            with open(updated_prompts_path, 'r') as f:
+                lyric2prompt = json.load(f)
+            print("Using updated prompts with characters for video generation")
+        else:
+            print("Character generation failed, using original prompts")
+            
+    except Exception as e:
+        print(f"Gemini character generation error: {e}")
+        print("Continuing with original prompts")
+
     # characters = get_characters(lyric2prompt)
 
     # train diffusionmodels using dreambooth
