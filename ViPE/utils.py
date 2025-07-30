@@ -11,7 +11,7 @@ from transformers import GPT2LMHeadModel, GPT2Tokenizer
 from .generation import generate_from_sentences
 from .semantic_similarity_eval import mpnet_embed_class
 from moviepy import VideoFileClip, TextClip, CompositeVideoClip, AudioFileClip
-from googletrans import Translator
+from deep_translator import GoogleTranslator
 
 class dotdict(dict):
     """dot.notation access to dictionary attributes"""
@@ -58,14 +58,21 @@ def prepare_lyrics(lyrics, context_size, prefix):
     return lyrics
 
 def translate_to_eng(transcription):
+    # Collect all segment texts
+    segments = transcription.get('segments', [])
+    texts = [seg['text'] for seg in segments if seg.get('text')]
 
-    translator = Translator()
-    trs_transcription=[]
-    for line in transcription['segments']:
-        text = line['text']
-        text = translator.translate(text,dest='en').text
-        line['text'] = text
-        trs_transcription.append(line)
+    # Translate all at once using batch
+    translated_texts = GoogleTranslator(source='auto', target='en') \
+                        .translate_batch(texts)
+
+    # Replace each segment's text with translated text
+    trs_transcription = []
+    for seg, new_text in zip(segments, translated_texts):
+        seg_copy = seg.copy()
+        seg_copy['text'] = new_text
+        trs_transcription.append(seg_copy)
+
     return trs_transcription
 
  # import pandas as pd
