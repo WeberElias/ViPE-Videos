@@ -15,6 +15,15 @@ def setup_gemini():
     genai.configure(api_key=api_key)
     return genai.GenerativeModel('gemini-2.5-flash')
 
+def call_gemini(model, prompt):
+    """Basic Gemini API call"""
+    try:
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except Exception as e:
+        print(f"Gemini API error: {e}")
+        return None
+
 def generate_characters(model, json_file_path, output_dir="./"):
     """
     Generate characters from lyrics interpretation file using Gemini

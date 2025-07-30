@@ -11,6 +11,7 @@ import clip
 import random
 from ViPE.utils import dotdict, get_lyrtic2prompts, get_track_intensity, get_visual_effects, get_visual_effects_disco #, Character
 from ViPE.utils import add_audio_to_mp4, add_captions_to_video
+from ViPE.character import Character, load_characters_from_json, update_character_occurrences
 import subprocess
 import time, gc, os, sys
 from types import SimpleNamespace
@@ -128,8 +129,9 @@ def main():
     lyric2prompt = get_lyrtic2prompts(my_args)
     torch.cuda.empty_cache()
 
-    #TODO
     # Generate characters and update prompts using Gemini
+    success = False
+    characters_path = None
     try:
         gemini_model = setup_gemini()
         success, updated_prompts_path, characters_path = generate_characters(
@@ -154,7 +156,15 @@ def main():
         print(f"Gemini character generation error: {e}")
         print("Continuing with original prompts")
 
-    # characters = get_characters(lyric2prompt)
+    # Turn characters json file into list of Character objects
+    characters = []
+    if success and characters_path:
+        characters = load_characters_from_json(characters_path)
+        # Update character occurrences based on prompts
+        characters = update_character_occurrences(characters, lyric2prompt)
+        print(f"Loaded and updated {len(characters)} character objects")
+    else:
+        print("No characters file available, continuing without characters")
 
     # train diffusionmodels using dreambooth
 
@@ -247,7 +257,7 @@ def main():
         contrast_schedule = "0: (1.0)"  # @param {type:"string"}
         hybrid_video_comp_alpha_schedule = "0:(1)"  # @param {type:"string"}
         hybrid_video_comp_mask_blend_alpha_schedule = "0:(0.5)"  # @param {type:"string"}
-        hybrid_video_comp_mask_contrast_schedule = "0:(1)"  # @param {type:"string"}
+        hybrid_video_comp_mask_contrast_schedule = "0: (1)"  # @param {type:"string"}
         hybrid_video_comp_mask_auto_contrast_cutoff_high_schedule = "0:(100)"  # @param {type:"string"}
         hybrid_video_comp_mask_auto_contrast_cutoff_low_schedule = "0:(0)"  # @param {type:"string"}
 
