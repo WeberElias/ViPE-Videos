@@ -21,6 +21,7 @@ from helpers.render import render_animation, render_input_video, render_image_ba
 from helpers.model_load import load_model, get_model_output_paths
 from helpers.aesthetics import load_aesthetics_model
 from helpers.gemini_api import setup_gemini, generate_characters
+from helpers.train_dreambooth_script import train_character
 
 
 
@@ -166,8 +167,54 @@ def main():
     else:
         print("No characters file available, continuing without characters")
 
-    # train diffusionmodels using dreambooth
+    # Train character models using Dreambooth
+    if characters:
+        # Create training folders
+        training_folders_created = []
+        for character in characters:
+            folder_name = character.name.lower().replace(' ', '_').replace(',', '')
+            training_folder = os.path.join(mp3_dir, f"training_images_{mp3_name}", folder_name)
+            os.makedirs(training_folder, exist_ok=True)
+            character.training_images = training_folder
+            training_folders_created.append((character.name, training_folder))
+        
+        print("Training folders created. Add 3-10 images per character:")
+        for name, folder in training_folders_created:
+            print(f"  {name}: {folder}")
+        
+        # Wait for user confirmation
+        while True:
+            user_input = input("\nHave you added the training images? (y/n/skip): ").lower().strip()
+            
+            if user_input in ['y', 'yes']:
+                characters_to_train = []
+                for character in characters:
+                    if os.path.exists(character.training_images):
+                        image_files = [f for f in os.listdir(character.training_images) 
+                                       if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+                        if len(image_files) >= 3:
+                            characters_to_train.append(character)
+                
+                if characters_to_train:
+                    print(f"Training {len(characters_to_train)} characters...")
+                    for i, character in enumerate(characters_to_train):
+                        print(f"Training {character.name} ({i+1}/{len(characters_to_train)})")
+                        success, model_path = train_character(character)
+                        if success:
+                            character.model_path = model_path
+                break
+                
+            elif user_input in ['n', 'no']:
+                continue
+                
+            elif user_input == 'skip':
+                break
+                
+            else:
+                print("Please enter 'y', 'n', or 'skip'")
 
+    else:
+        print("No characters to train, continuing with base model...")
     
     animation_prompts = {}
     name = 'test_{}_rews_{}_{}fps_{}ctx_{}_vipe_{}_abst_{}'.format(my_args.animation_mode, my_args.n_img_reward_samples,

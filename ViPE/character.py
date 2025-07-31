@@ -1,4 +1,6 @@
 import json
+import re
+import os
 
 class Character:
     """A character object that tracks character information and in which lines they appear"""
@@ -19,6 +21,7 @@ class Character:
         self.line_occurrences = line_occurrences if line_occurrences is not None else []
         self.regularization_images = regularization_images
         self.training_images = training_images
+        self.model_path = None
     
     def add_occurrence(self, line_number):
         """Add a line number where this character appears"""
@@ -55,6 +58,14 @@ class Character:
     def get_regularization_images_path(self):
         """Get the path to regularization images for this character"""
         return self.regularization_images
+    
+    def has_trained_model(self):
+        """Check if this character has a trained model"""
+        return self.model_path and os.path.exists(self.model_path)
+
+    def get_model_path(self):
+        """Get the path to the trained model"""
+        return getattr(self, 'model_path', None)
 
 
 def load_characters_from_json(json_file_path):
@@ -137,7 +148,6 @@ def update_character_occurrences(characters, lyric2prompt):
     Returns:
         list: Updated list of Character objects with line occurrences
     """
-    import re
     
     for line_index, line_data in enumerate(lyric2prompt):
         prompt = line_data.get('prompt', '')
