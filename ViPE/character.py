@@ -22,6 +22,9 @@ class Character:
         self.regularization_images = regularization_images
         self.training_images = training_images
         self.model_path = None
+        
+        # Generate unique identifier for DreamBooth training
+        self.unique_identifier = f"sks{name.lower().replace(' ', '').replace(',', '').replace('.', '').replace("'", '').replace('-', '')}"
     
     def add_occurrence(self, line_number):
         """Add a line number where this character appears"""
@@ -32,6 +35,47 @@ class Character:
     def appears_in_line(self, line_number):
         """Check if character appears in a specific line"""
         return line_number in self.line_occurrences
+    
+    @staticmethod
+    def replace_character_names_in_prompts(lyric2prompt, characters):
+        """
+        Replace character names in prompts with their unique identifiers
+        
+        Args:
+            lyric2prompt (list): List of prompt dictionaries
+            characters (list): List of Character objects
+            
+        Returns:
+            dict: Dictionary with frame numbers as keys and prompt/character info as values
+        """
+        animation_prompts = {}
+        
+        for num, l2p in enumerate(lyric2prompt):
+            start = int(l2p['start'] * 15)  # Assuming 15 fps, could be parameterized
+            
+            # Start with the original prompt
+            prompt_text = l2p['prompt']
+            
+            # Find which character(s) appear in this prompt and replace names with unique identifiers
+            active_characters = []
+            if characters:
+                for character in characters:
+                    # Use word boundary matching to avoid false positives
+                    pattern = r'\b' + re.escape(character.name.lower()) + r'\b'
+                    if re.search(pattern, prompt_text.lower()):
+                        active_characters.append(character)
+                        
+                        # Replace character name with their unique identifier
+                        pattern_replace = re.compile(re.escape(character.name), re.IGNORECASE)
+                        prompt_text = pattern_replace.sub(character.unique_identifier, prompt_text)
+            
+            # Store both modified prompt and character info
+            animation_prompts[start] = {
+                'prompt': prompt_text,
+                'characters': active_characters
+            }
+        
+        return animation_prompts
     
     def to_dict(self):
         """Return a dictionary representation of the Character object."""

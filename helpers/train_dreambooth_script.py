@@ -126,13 +126,11 @@ def train_character(character, saving_dir, num_class_images=200, max_train_steps
     # Create class images directory in saving_dir
     class_dir = os.path.join(saving_dir, "class_images")
     
-    # Create instance and class prompts with character-specific rare trigger token
-    # Use character-specific rare tokens to avoid both conflicts between LoRAs and existing model knowledge
-    trigger_token = f"sks{character.name.lower().replace(' ', '').replace(',', '')}"  # e.g., "sksleo", "skselara", "sksgareth"
-    instance_prompt = f"a photo of {trigger_token} {character.description}"
+    # Use the character's unique identifier for consistent training
+    instance_prompt = f"a photo of {character.unique_identifier} {character.description}"
     class_prompt = f"a photo of {character.description.split(',')[0].strip()}"  # Use first part of description as class
     
-    print(f"Trigger token: {trigger_token}")
+    print(f"Unique identifier: {character.unique_identifier}")
     print(f"Instance prompt: {instance_prompt}")
     print(f"Class prompt: {class_prompt}")
     print(f"Output directory: {output_dir}")

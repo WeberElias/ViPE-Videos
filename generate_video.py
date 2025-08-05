@@ -9,12 +9,14 @@ import argparse
 import torch
 import clip
 import random
-from ViPE.utils import dotdict, get_lyrtic2prompts, get_track_intensity, get_visual_effects, get_visual_effects_disco #, Character
+import subprocess
+import time
+import gc
+import re
+from types import SimpleNamespace
+from ViPE.utils import dotdict, get_lyrtic2prompts, get_track_intensity, get_visual_effects, get_visual_effects_disco
 from ViPE.utils import add_audio_to_mp4, add_captions_to_video
 from ViPE.character import Character, load_characters_from_json, update_character_occurrences
-import subprocess
-import time, gc, os, sys
-from types import SimpleNamespace
 from helpers.save_images import get_output_folder
 from helpers.settings import load_args
 from helpers.render import render_animation, render_input_video, render_image_batch, render_interpolation
@@ -319,32 +321,17 @@ def main():
     else:
         print("No characters to train, continuing with base model...")
     
-    animation_prompts = {}
+    animation_prompts = Character.replace_character_names_in_prompts(lyric2prompt, characters)
+    
+    # Add postfix to all prompts
+    for frame_num, prompt_data in animation_prompts.items():
+        prompt_data['prompt'] += my_args.postfix_prompts
+    
     name = 'test_{}_rews_{}_{}fps_{}ctx_{}_vipe_{}_abst_{}'.format(my_args.animation_mode, my_args.n_img_reward_samples,
                                                                    fps_p, my_args.context_size, mp3_name,
                                                                    my_args.use_vipe,
                                                                    my_args.song_abstractness)
-    for num, l2p in enumerate(lyric2prompt):
-        # end = int(l2p['end'] * fps_p)
-        start = int(l2p['start'] * fps_p)
-        
-        # Find which character(s) appear in this prompt
-        active_characters = []
-        if characters:
-            for character in characters:
-                # Use word boundary matching to avoid false positives
-                # This ensures we match complete character names, not substrings
-                import re
-                pattern = r'\b' + re.escape(character.name.lower()) + r'\b'
-                if re.search(pattern, l2p['prompt'].lower()):
-                    active_characters.append(character)
-        
-        # Store both prompt and character info
-        animation_prompts[start] = {
-            'prompt': l2p['prompt'] + my_args.postfix_prompts,
-            'characters': active_characters
-        }
-
+    
     if my_args.disco_mode:
         visual_effects = get_visual_effects_disco(my_args.mp3_file, fps_p, my_args.animation_mode)
     else:
