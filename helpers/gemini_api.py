@@ -37,7 +37,7 @@ def load_prompt_template(prompt_file_path=None):
     if prompt_file_path is None:
         # Default path relative to this file
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        prompt_file_path = os.path.join(os.path.dirname(current_dir), "prompts", "character_generation_prompt.txt")
+        prompt_file_path = os.path.join(os.path.dirname(current_dir), "prompts", "single_character_generation_prompt.txt") # single_character... or character_generation_prompt.txt
     
     try:
         with open(prompt_file_path, 'r', encoding='utf-8') as f:
