@@ -24,27 +24,28 @@ def call_gemini(model, prompt):
         print(f"Gemini API error: {e}")
         return None
 
-def generate_characters(model, json_file_path, output_dir="./"):
+def load_prompt_template(prompt_file_path=None):
     """
-    Generate characters from lyrics interpretation file using Gemini
+    Load the character generation prompt template from file
     
     Args:
-        model: Gemini model instance
-        json_file_path: Path to lyrics interpretation JSON (lyric2prompt)
-        output_dir: Directory to save output files
+        prompt_file_path: Path to prompt file. If None, uses default path.
         
     Returns:
-        tuple: (success: bool, updated_prompts_path: str, characters_path: str)
+        str: The prompt template with {json_content} placeholder
     """
+    if prompt_file_path is None:
+        # Default path relative to this file
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        prompt_file_path = os.path.join(os.path.dirname(current_dir), "prompts", "character_generation_prompt.txt")
     
-    # Read the JSON file
-    with open(json_file_path, 'r') as f:
-        lyrics_data = json.load(f)
-    
-    # Convert to string for the prompt
-    json_content = json.dumps(lyrics_data, indent=2)
-    
-    prompt = f"""I'm going to provide you the lyrics of a song and an interpretation of those lyrics. The interpretations are a descriptive interpretation to be used as prompts for image generation. The lyrics are marked as "text" and the interpretations as "prompt". Your task is to:
+    try:
+        with open(prompt_file_path, 'r', encoding='utf-8') as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        print(f"Warning: Prompt file not found at {prompt_file_path}, using default prompt")
+        # Fallback to original hardcoded prompt
+        return """I'm going to provide you the lyrics of a song and an interpretation of those lyrics. The interpretations are a descriptive interpretation to be used as prompts for image generation. The lyrics are marked as "text" and the interpretations as "prompt". Your task is to:
 
 Create a short list of no more than five characters with very brief visual descriptions, like:
 
@@ -74,7 +75,34 @@ Constraints:
 
 Here is the lyrics interpretation file:
 
-{json_content}"""
+{{json_content}}"""
+
+def generate_characters(model, json_file_path, output_dir="./", prompt_file_path=None):
+    """
+    Generate characters from lyrics interpretation file using Gemini
+    
+    Args:
+        model: Gemini model instance
+        json_file_path: Path to lyrics interpretation JSON (lyric2prompt)
+        output_dir: Directory to save output files
+        prompt_file_path: Path to custom prompt file (optional)
+        
+    Returns:
+        tuple: (success: bool, updated_prompts_path: str, characters_path: str)
+    """
+    
+    # Read the JSON file
+    with open(json_file_path, 'r') as f:
+        lyrics_data = json.load(f)
+    
+    # Convert to string for the prompt
+    json_content = json.dumps(lyrics_data, indent=2)
+    
+    # Load prompt template from file
+    prompt_template = load_prompt_template(prompt_file_path)
+    
+    # Format the prompt with the JSON content
+    prompt = prompt_template.format(json_content=json_content)
     
     # Call Gemini
     gemini_response = call_gemini(model, prompt)
