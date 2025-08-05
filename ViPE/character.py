@@ -24,7 +24,16 @@ class Character:
         self.model_path = None
         
         # Generate unique identifier for DreamBooth training
-        self.unique_identifier = f"sks{name.lower().replace(' ', '').replace(',', '').replace('.', '').replace("'", '').replace('-', '')}"
+        self.unique_identifier = f"sks{self._sanitize_name_for_identifier(name)}"
+    
+    def _sanitize_name_for_identifier(self, name):
+        """
+        Sanitize character name for use as unique identifier
+        Removes all non-alphanumeric characters to prevent issues
+        """
+        # Convert to lowercase and keep only letters and numbers
+        sanitized = re.sub(r'[^a-z0-9]', '', name.lower())
+        return sanitized
     
     def add_occurrence(self, line_number):
         """Add a line number where this character appears"""
