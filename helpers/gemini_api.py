@@ -100,58 +100,91 @@ def validate_and_save_gemini_response(gemini_response, original_json_path, outpu
         tuple: (success: bool, updated_prompts_path: str, characters_path: str)
     """
     try:
-        # Clean the response - remove markdown code blocks if present
-        cleaned_response = gemini_response.strip()
-        if cleaned_response.startswith("```json"):
-            cleaned_response = cleaned_response[7:]
-        if cleaned_response.endswith("```"):
-            cleaned_response = cleaned_response[:-3]
-        cleaned_response = cleaned_response.strip()
+        # First, try to extract JSON from markdown code blocks
+        pattern = r'```json\s*(.*?)\s*```'
+        matches = re.findall(pattern, gemini_response, re.DOTALL)
         
-        # Try to find the character list at the end
-        # Look for the last JSON array in the response
-        character_pattern = r'\[\s*\{[^}]*"name"[^}]*"description"[^}]*\}[^\]]*\]'
-        character_matches = list(re.finditer(character_pattern, cleaned_response, re.DOTALL))
+        updated_prompts = None
+        characters = None
         
-        if not character_matches:
-            print("Error: No character list found in response")
-            return False, None, None
-        
-        # Get the last character list match
-        last_character_match = character_matches[-1]
-        character_json_str = last_character_match.group()
-        
-        # Remove character list from response to get updated prompts
-        updated_prompts_str = cleaned_response[:last_character_match.start()].strip()
-        
-        # Validate character JSON
-        try:
-            characters = json.loads(character_json_str)
-            if not isinstance(characters, list):
-                raise ValueError("Characters must be a list")
-            
-            if len(characters) > 5:
-                print(f"Warning: Found {len(characters)} characters, expected max 5")
-            
-            # Validate character structure
-            for char in characters:
-                if not isinstance(char, dict) or "name" not in char or "description" not in char:
-                    raise ValueError("Invalid character structure")
-                    
-        except json.JSONDecodeError as e:
-            print(f"Error: Invalid character JSON: {e}")
-            return False, None, None
-        
-        # Validate updated prompts JSON
-        try:
-            updated_prompts = json.loads(updated_prompts_str)
-            if not isinstance(updated_prompts, list):
-                raise ValueError("Updated prompts must be a list")
+        if len(matches) == 2:
+            # New format: Two separate JSON blocks in markdown
+            print("Processing response with two JSON blocks in markdown")
+            try:
+                updated_prompts = json.loads(matches[0].strip())
+                characters = json.loads(matches[1].strip())
+            except json.JSONDecodeError as e:
+                print(f"Error: Invalid JSON in two-block markdown format: {e}")
+                return False, None, None
                 
-        except json.JSONDecodeError as e:
-            print(f"Error: Invalid updated prompts JSON: {e}")
+        elif len(matches) == 1:
+            # Old format: Single JSON block with characters at the end
+            print("Processing response with single JSON block in markdown (legacy format)")
+            try:
+                cleaned_response = matches[0].strip()
+                
+                # Try to find the character list at the end
+                character_pattern = r'\[\s*\{[^}]*"name"[^}]*"description"[^}]*\}[^\]]*\]'
+                character_matches = list(re.finditer(character_pattern, cleaned_response, re.DOTALL))
+                
+                if not character_matches:
+                    print("Error: No character list found in single block response")
+                    return False, None, None
+                
+                # Get the last character list match
+                last_character_match = character_matches[-1]
+                character_json_str = last_character_match.group()
+                
+                # Remove character list from response to get updated prompts
+                updated_prompts_str = cleaned_response[:last_character_match.start()].strip()
+                
+                # Parse both parts
+                characters = json.loads(character_json_str)
+                updated_prompts = json.loads(updated_prompts_str)
+                
+            except json.JSONDecodeError as e:
+                print(f"Error: Invalid JSON in single-block markdown format: {e}")
+                return False, None, None
+        else:
+            # No markdown code blocks found - try to parse as raw JSON
+            print("No markdown code blocks found, attempting to parse as raw JSON")
+            
+            # Look for two separate JSON arrays in the raw response
+            json_array_pattern = r'\[\s*\{.*?\}\s*\]'
+            json_arrays = re.findall(json_array_pattern, gemini_response, re.DOTALL)
+            
+            if len(json_arrays) == 2:
+                print("Found two JSON arrays in raw response")
+                try:
+                    updated_prompts = json.loads(json_arrays[0])
+                    characters = json.loads(json_arrays[1])
+                except json.JSONDecodeError as e:
+                    print(f"Error: Invalid JSON in raw format: {e}")
+                    return False, None, None
+            else:
+                print(f"Error: Expected 2 JSON arrays in raw format, found {len(json_arrays)}")
+                print("Available arrays:", [arr[:100] + "..." if len(arr) > 100 else arr for arr in json_arrays])
+                return False, None, None
+        
+        # Validate updated prompts
+        if not isinstance(updated_prompts, list):
+            print("Error: Updated prompts must be a list")
+            return False, None, None
+            
+        # Validate characters
+        if not isinstance(characters, list):
+            print("Error: Characters must be a list")
             return False, None, None
         
+        if len(characters) > 5:
+            print(f"Warning: Found {len(characters)} characters, expected max 5")
+        
+        # Validate character structure
+        for char in characters:
+            if not isinstance(char, dict) or "name" not in char or "description" not in char:
+                print(f"Error: Invalid character structure: {char}")
+                return False, None, None
+                
         # Save files
         base_name = os.path.splitext(os.path.basename(original_json_path))[0]
         
