@@ -2,7 +2,7 @@ import google.generativeai as genai
 import os
 import json
 import re
-from dotenv import load_dotenv  # pip install python-dotenv
+from dotenv import load_dotenv
 
 def setup_gemini():
     """Initialize Gemini with API key from environment"""
@@ -19,9 +19,13 @@ def call_gemini(model, prompt):
     """Basic Gemini API call"""
     try:
         response = model.generate_content(prompt)
-        return response.text.strip()
+        response_text = response.text.strip()
+        return response_text
     except Exception as e:
         print(f"Gemini API error: {e}")
+        print(f"Exception type: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
         return None
 
 def load_prompt_template(prompt_file_path=None):
@@ -91,29 +95,36 @@ def generate_characters(model, json_file_path, output_dir="./", prompt_file_path
         tuple: (success: bool, updated_prompts_path: str, characters_path: str)
     """
     
-    # Read the JSON file
-    with open(json_file_path, 'r') as f:
-        lyrics_data = json.load(f)
-    
-    # Convert to string for the prompt
-    json_content = json.dumps(lyrics_data, indent=2)
-    
-    # Load prompt template from file
-    prompt_template = load_prompt_template(prompt_file_path)
-    
-    # Format the prompt with the JSON content
-    prompt = prompt_template.format(json_content=json_content)
-    
-    # Call Gemini
-    gemini_response = call_gemini(model, prompt)
-    
-    if gemini_response is None:
-        print("Error: Failed to get response from Gemini")
+    try:
+        # Read the JSON file
+        with open(json_file_path, 'r') as f:
+            lyrics_data = json.load(f)
+        
+        # Convert to string for the prompt
+        json_content = json.dumps(lyrics_data, indent=2)
+        
+        # Load prompt template from file
+        prompt_template = load_prompt_template(prompt_file_path)
+        
+        # Format the prompt with the JSON content
+        prompt = prompt_template.format(json_content=json_content)
+        
+        # Call Gemini
+        gemini_response = call_gemini(model, prompt)
+        
+        if gemini_response is None:
+            print("Error: Failed to get response from Gemini")
+            return False, None, None
+        
+        # Validate and save the response
+        return validate_and_save_gemini_response(gemini_response, json_file_path, output_dir)
+        
+    except Exception as e:
+        print(f"ERROR in generate_characters: {e}")
+        print(f"Exception type: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
         return False, None, None
-    
-    print("Gemini response: \n" + gemini_response)
-    # Validate and save the response
-    return validate_and_save_gemini_response(gemini_response, json_file_path, output_dir)
 
 def validate_and_save_gemini_response(gemini_response, original_json_path, output_dir="./"):
     """

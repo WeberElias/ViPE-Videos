@@ -3,10 +3,10 @@ I'm going to provide you the lyrics of a song and an interpretation of those lyr
 Create a short list of no more than five characters with very brief visual descriptions, like:
 
 [
-  {
+  {{
     "name": "Alice",
     "description": "Woman, middle-aged, brown hair, green eyes"
-  }
+  }}
 ]
 
 Use this exact JSON structure. Do not use real persons. Characters must be named (e.g., <Alice>) and referenced by name in the prompts. Reuse existing characters whenever possible. Adjust prompts to incorporate characters and improve coherence, while keeping the original descriptive intent.

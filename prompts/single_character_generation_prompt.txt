@@ -3,10 +3,10 @@ I'm going to provide you the lyrics of a song and an interpretation of those lyr
 Create ONLY ONE character with a very brief visual description, like:
 
 [
-  {
+  {{
     "name": "Alex",
     "description": "Young person, curly dark hair, wearing casual clothes"
-  }
+  }}
 ]
 
 Use this exact JSON structure. Do not use real persons. The character must be named (e.g., <Alex>) and referenced by name in ALL the prompts. Adjust ALL prompts to incorporate this single character and improve coherence, while keeping the original descriptive intent.
