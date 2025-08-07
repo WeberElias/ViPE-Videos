@@ -12,6 +12,9 @@ from torch import autocast
 from contextlib import nullcontext
 from einops import rearrange, repeat
 
+from diffusers import StableDiffusionPipeline
+from peft import PeftModel
+
 from .prompt import get_uc_and_c
 from .k_samplers import sampler_fn, make_inject_timing_fn
 from scipy.ndimage import gaussian_filter
@@ -26,7 +29,99 @@ from .load_images import load_img, load_mask_latent, prepare_mask, prepare_overl
 def add_noise(sample: torch.Tensor, noise_amt: float) -> torch.Tensor:
     return sample + torch.randn(sample.shape, device=sample.device) * noise_amt
 
-def generate(args, root, frame = 0, return_latent=False, return_sample=False, return_c=False):
+def generate_simple_pipeline(args, root, frame=0, return_latent=False, return_sample=False, return_c=False):
+    """
+    Simple diffusers-based generation pipeline
+    """
+    try:
+        pipe = StableDiffusionPipeline.from_pretrained(
+            "runwayml/stable-diffusion-v1-5",
+            torch_dtype=torch.float16,
+            safety_checker=None,
+            requires_safety_checker=False
+        ).to(root.device)
+        
+        if hasattr(root, 'lora_manager') and hasattr(root, 'characters'):
+            current_characters = []
+            for character in root.characters:
+                if character.unique_identifier.lower() in args.prompt.lower():
+                    current_characters.append(character)
+            
+            if current_characters:
+                for character in current_characters:
+                    if hasattr(root.lora_manager, 'lora_cache') and character.name in root.lora_manager.lora_cache:
+                        lora_data = root.lora_manager.lora_cache[character.name]
+                        unet_dir = lora_data['unet_dir']
+                        text_encoder_dir = lora_data['text_encoder_dir']
+                        
+                        if os.path.exists(unet_dir):
+                            pipe.unet = PeftModel.from_pretrained(pipe.unet, unet_dir)
+                        
+                        if os.path.exists(text_encoder_dir):
+                            pipe.text_encoder = PeftModel.from_pretrained(pipe.text_encoder, text_encoder_dir)
+                        
+                        break
+        
+        pipe.set_progress_bar_config(disable=True)
+        
+        with torch.no_grad():
+            result = pipe(
+                prompt=args.prompt,
+                height=args.H,
+                width=args.W,
+                num_inference_steps=args.steps,
+                guidance_scale=args.scale,
+                num_images_per_prompt=args.n_samples
+            )
+        
+        results = []
+        
+        for image in result.images:
+            if args.bit_depth_output == 8:
+                processed_image = image
+            elif args.bit_depth_output == 32:
+                image_array = np.array(image).astype(np.float32) / 255.0
+                processed_image = image_array
+            else:
+                image_array = (np.array(image) * 256).astype(np.uint16)
+                processed_image = image_array
+            
+            results.append(processed_image)
+        
+        if return_sample and return_latent and return_c:
+            return [None, None, None] + results
+        elif return_sample and return_latent:
+            return [None, None] + results
+        elif return_sample:
+            return None, results[0] if results else None
+        elif return_latent:
+            return [None] + results
+        elif return_c:
+            return [None] + results
+        else:
+            return results
+        
+    except Exception as e:
+        print(f"Simple pipeline failed: {e}")
+        import traceback
+        traceback.print_exc()
+        print("Falling back to original pipeline...")
+        return generate_original_pipeline(args, root, frame, return_latent, return_sample, return_c)
+
+def generate_original_pipeline(args, root, frame=0, return_latent=False, return_sample=False, return_c=False):
+    """
+    Original complex LDM pipeline
+    """
+    
+    if hasattr(root, 'lora_manager') and hasattr(root, 'characters'):
+        current_characters = []
+        for character in root.characters:
+            if character.unique_identifier.lower() in args.prompt.lower():
+                current_characters.append(character)
+        
+        if current_characters:
+            root.lora_manager.apply_character_loras(current_characters)
+    
     seed_everything(args.seed)
     os.makedirs(args.outdir, exist_ok=True)
 
@@ -39,8 +134,9 @@ def generate(args, root, frame = 0, return_latent=False, return_sample=False, re
     prompt = args.prompt
     assert prompt is not None
     data = [batch_size * [prompt]]
+    
     precision_scope = autocast if args.precision == "autocast" else nullcontext
-
+    
     init_latent = None
     mask_image = None
     init_image = None
@@ -56,19 +152,15 @@ def generate(args, root, frame = 0, return_latent=False, return_sample=False, re
         init_image = init_image.to(root.device)
         init_image = repeat(init_image, '1 ... -> b ...', b=batch_size)
         with precision_scope("cuda"):
-            init_latent = root.model.get_first_stage_encoding(root.model.encode_first_stage(init_image))  # move to latent space        
+            init_latent = root.model.get_first_stage_encoding(root.model.encode_first_stage(init_image))
 
     if not args.use_init and args.strength > 0 and args.strength_0_no_init:
-        #print("\nNo init image, but strength > 0. Strength has been auto set to 0, since use_init is False.")
-        #print("If you want to force strength > 0 with no init, please set strength_0_no_init to False.\n")
         args.strength = 0
 
-    # Mask functions
     if args.use_mask:
         assert args.mask_file is not None or mask_image is not None, "use_mask==True: An mask image is required for a mask. Please enter a mask_file or use an init image with an alpha channel"
         assert args.use_init, "use_mask==True: use_init is required for a mask"
         assert init_latent is not None, "use_mask==True: An latent init image is required for a mask"
-
 
         mask = prepare_mask(args.mask_file if mask_image is None else mask_image, 
                             init_latent.shape, 
@@ -86,7 +178,6 @@ def generate(args, root, frame = 0, return_latent=False, return_sample=False, re
 
     assert not ( (args.use_mask and args.overlay_mask) and (args.init_sample is None and init_image is None)), "Need an init image when use_mask == True and overlay_mask == True"
 
-    # Init MSE loss image
     init_mse_image = None
     if args.init_mse_scale and args.init_mse_image != None and args.init_mse_image != '':
         init_mse_image, mask_image = load_img(args.init_mse_image,
@@ -99,7 +190,6 @@ def generate(args, root, frame = 0, return_latent=False, return_sample=False, re
 
     t_enc = int((1.0-args.strength) * args.steps)
 
-    # Noise schedule for the k-diffusion samplers (used for masking)
     k_sigmas = model_wrap.get_sigmas(args.steps)
     args.clamp_schedule = dict(zip(k_sigmas.tolist(), np.linspace(args.clamp_start,args.clamp_stop,args.steps+1)))
     k_sigmas = k_sigmas[len(k_sigmas)-t_enc-1:]
@@ -115,7 +205,6 @@ def generate(args, root, frame = 0, return_latent=False, return_sample=False, re
     else:
         colormatch_image = None
 
-    # Loss functions
     if args.init_mse_scale != 0:
         if args.decode_method == "linear":
             mse_loss_fn = make_mse_loss(root.model.linear_decode(root.model.get_first_stage_encoding(root.model.encode_first_stage(init_mse_image.to(root.device)))))
@@ -125,7 +214,7 @@ def generate(args, root, frame = 0, return_latent=False, return_sample=False, re
         mse_loss_fn = None
 
     if args.colormatch_scale != 0:
-        _,_ = get_color_palette(root, args.colormatch_n_colors, colormatch_image, verbose=True) # display target color palette outside the latent space
+        _,_ = get_color_palette(root, args.colormatch_n_colors, colormatch_image, verbose=True)
         if args.decode_method == "linear":
             grad_img_shape = (int(args.W/args.f), int(args.H/args.f))
             colormatch_image = root.model.linear_decode(root.model.get_first_stage_encoding(root.model.encode_first_stage(colormatch_image.to(root.device))))
@@ -166,7 +255,6 @@ def generate(args, root, frame = 0, return_latent=False, return_sample=False, re
         [aesthetics_loss_fn,        args.aesthetics_scale]
     ]
 
-    # Conditioning gradients not implemented for ddim or PLMS
     assert not( any([cond_fs[1]!=0 for cond_fs in loss_fns_scales]) and (args.sampler in ["ddim","plms"]) ), "Conditioning gradients not implemented for ddim or plms. Please use a different sampler."
 
     callback = SamplerCallback(args=args,
@@ -188,8 +276,8 @@ def generate(args, root, frame = 0, return_latent=False, return_sample=False, re
                                     args.gradient_add_to, 
                                     args.cond_uncond_sync,
                                     decode_method=args.decode_method,
-                                    grad_inject_timing_fn=grad_inject_timing_fn, # option to use grad in only a few of the steps
-                                    grad_consolidate_fn=None, # function to add grad to image fn(img, grad, sigma)
+                                    grad_inject_timing_fn=grad_inject_timing_fn,
+                                    grad_consolidate_fn=None,
                                     verbose=False)
 
     results = []
@@ -204,7 +292,6 @@ def generate(args, root, frame = 0, return_latent=False, return_sample=False, re
                     else:
                         uc = root.model.get_learned_conditioning(batch_size * [""])
                         c = root.model.get_learned_conditioning(prompts)
-
 
                     if args.scale == 1.0:
                         uc = None
@@ -223,12 +310,11 @@ def generate(args, root, frame = 0, return_latent=False, return_sample=False, re
                             cb=callback,
                             verbose=False)
                     else:
-                        # args.sampler == 'plms' or args.sampler == 'ddim':
                         if init_latent is not None and args.strength > 0:
                             z_enc = sampler.stochastic_encode(init_latent, torch.tensor([t_enc]*batch_size).to(root.device))
                         else:
                             z_enc = torch.randn([args.n_samples, args.C, args.H // args.f, args.W // args.f], device=root.device)
-                        if args.sampler in ['plms','ddim']: # no "decode" function in plms, so use "sample"
+                        if args.sampler in ['plms','ddim']:
                             shape = [args.C, args.H // args.f, args.W // args.f]
                             samples, _ = sampler.sample(S=args.steps,
                                                             conditioning=c,
@@ -243,14 +329,12 @@ def generate(args, root, frame = 0, return_latent=False, return_sample=False, re
                         else:
                             raise Exception(f"Sampler {args.sampler} not recognised.")
 
-                    
                     if return_latent:
                         results.append(samples.clone())
 
                     x_samples = root.model.decode_first_stage(samples)
 
                     if args.use_mask and args.overlay_mask:
-                        # Overlay the masked image after the image is generated
                         if args.init_sample_raw is not None:
                             img_original = args.init_sample_raw
                         elif init_image is not None:
@@ -290,3 +374,14 @@ def generate(args, root, frame = 0, return_latent=False, return_sample=False, re
                         image = uint_number(x_sample, args.bit_depth_output)
                         results.append(image)
     return results
+
+def generate(args, root, frame=0, return_latent=False, return_sample=False, return_c=False):
+    """
+    Main generate function - toggle between pipelines here
+    """
+    
+    # Use simple diffusers pipeline
+    #return generate_simple_pipeline(args, root, frame, return_latent, return_sample, return_c)
+    
+    # Use original complex LDM pipeline  
+    return generate_original_pipeline(args, root, frame, return_latent, return_sample, return_c)

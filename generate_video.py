@@ -16,7 +16,6 @@ import re
 from types import SimpleNamespace
 from ViPE.utils import dotdict, get_lyrtic2prompts, get_track_intensity, get_visual_effects, get_visual_effects_disco
 from ViPE.utils import add_audio_to_mp4, add_captions_to_video
-from ViPE.character import Character, load_characters_from_json, update_character_occurrences
 from helpers.save_images import get_output_folder
 from helpers.settings import load_args
 from helpers.render import render_animation, render_input_video, render_image_batch, render_interpolation
@@ -25,6 +24,7 @@ from helpers.aesthetics import load_aesthetics_model
 from helpers.gemini_api import setup_gemini, generate_characters
 from helpers.train_dreambooth_script import train_character
 from helpers.lora_manager import LoRAManager, is_valid_lora_directory
+from helpers.character import Character, load_characters_from_json, update_character_occurrences
 
 
 
@@ -370,20 +370,18 @@ def main():
         root.lora_manager.load_character_loras(characters)
         print(f"LoRA manager initialized with {len(characters)} character models")
         
-        # Validate that LoRA models were loaded correctly
-        print("\n=== LoRA Loading Validation ===")
+        # Test LoRA loading capability
+        print("\n=== LoRA Loading Test ===")
         for character in characters:
             if character.name in root.lora_manager.lora_cache:
-                lora_data = root.lora_manager.lora_cache[character.name]
-                if 'unet_weights' in lora_data and 'text_encoder_weights' in lora_data:
-                    unet_param_count = len(lora_data['unet_weights'])
-                    text_param_count = len(lora_data['text_encoder_weights'])
-                    print(f"{character.name}: UNet({unet_param_count} params), TextEncoder({text_param_count} params)")
+                success = root.lora_manager.test_lora_loading(character.name)
+                if success:
+                    print(f"{character.name}: ✓ Ready for application")
                 else:
-                    print(f"{character.name}: Legacy format or incomplete data")
+                    print(f"{character.name}: ✗ LoRA loading failed")
             else:
-                print(f"{character.name}: Failed to load LoRA weights")
-        print("================================\n")
+                print(f"{character.name}: ✗ Not found in cache")
+        print("=========================\n")
 
     def DeforumAnimArgs():
         # @markdown ####**Animation:**

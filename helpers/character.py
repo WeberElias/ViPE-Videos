@@ -77,15 +77,22 @@ class Character:
                         # Replace character name with their unique identifier
                         pattern_replace = re.compile(re.escape(character.name), re.IGNORECASE)
                         prompt_text = pattern_replace.sub(character.unique_identifier, prompt_text)
-            
-            # Store both modified prompt and character info
-            animation_prompts[start] = {
-                'prompt': prompt_text,
-                'characters': active_characters
-            }
+                    
+                    # Also check for and clean up bracketed identifiers from Gemini
+                    bracketed_identifier = f"<{character.unique_identifier}>"
+                    if bracketed_identifier in prompt_text:
+                        prompt_text = prompt_text.replace(bracketed_identifier, character.unique_identifier)
+                        if character not in active_characters:
+                            active_characters.append(character)
         
-        return animation_prompts
+        # Store both modified prompt and character info
+        animation_prompts[start] = {
+            'prompt': prompt_text,
+            'characters': active_characters
+        }
     
+        return animation_prompts
+
     def to_dict(self):
         """Return a dictionary representation of the Character object."""
         return {
