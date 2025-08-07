@@ -446,7 +446,7 @@ def render_animation(args, anim_args, animation_prompts, root):
                     # Validate LoRA application
                     validation_results = root.lora_manager.validate_lora_application()
                     for char_name, is_applied in validation_results.items():
-                        status = "✓ APPLIED" if is_applied else "✗ FAILED"
+                        status = "APPLIED" if is_applied else "FAILED"
                         print(f"  {char_name}: {status}")
                 else:
                     print(f"Frame {frame_idx}: Characters in prompt but no trained models: {[char.name for char in current_characters]}")

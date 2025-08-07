@@ -12,6 +12,7 @@ from torch import autocast
 from contextlib import nullcontext
 from einops import rearrange, repeat
 
+# ADD THESE IMPORTS FOR SIMPLE PIPELINE
 from diffusers import StableDiffusionPipeline
 from peft import PeftModel
 
@@ -42,6 +43,7 @@ def generate_simple_pipeline(args, root, frame=0, return_latent=False, return_sa
         ).to(root.device)
         
         if hasattr(root, 'lora_manager') and hasattr(root, 'characters'):
+            # Get current characters from the prompt
             current_characters = []
             for character in root.characters:
                 if character.unique_identifier.lower() in args.prompt.lower():
@@ -54,16 +56,20 @@ def generate_simple_pipeline(args, root, frame=0, return_latent=False, return_sa
                         unet_dir = lora_data['unet_dir']
                         text_encoder_dir = lora_data['text_encoder_dir']
                         
+                        # Apply UNet LoRA
                         if os.path.exists(unet_dir):
                             pipe.unet = PeftModel.from_pretrained(pipe.unet, unet_dir)
                         
+                        # Apply Text Encoder LoRA
                         if os.path.exists(text_encoder_dir):
                             pipe.text_encoder = PeftModel.from_pretrained(pipe.text_encoder, text_encoder_dir)
                         
                         break
         
+        # Set progress bar
         pipe.set_progress_bar_config(disable=True)
         
+        # Generate image
         with torch.no_grad():
             result = pipe(
                 prompt=args.prompt,
@@ -74,31 +80,40 @@ def generate_simple_pipeline(args, root, frame=0, return_latent=False, return_sa
                 num_images_per_prompt=args.n_samples
             )
         
+        # Convert results to match original format expectations
         results = []
         
         for image in result.images:
+            # Convert PIL to format expected by the rest of the system
             if args.bit_depth_output == 8:
-                processed_image = image
+                processed_image = image  # PIL Image for 8-bit
             elif args.bit_depth_output == 32:
                 image_array = np.array(image).astype(np.float32) / 255.0
                 processed_image = image_array
-            else:
+            else:  # 16-bit
                 image_array = (np.array(image) * 256).astype(np.uint16)
                 processed_image = image_array
             
             results.append(processed_image)
         
+        # Return format that matches what render.py expects
         if return_sample and return_latent and return_c:
-            return [None, None, None] + results
+            # Return [latent, sample, conditioning, image1, image2, ...]
+            return [None, None, None] + results  # Dummy values for latent, sample, c
         elif return_sample and return_latent:
+            # Return [latent, sample, image1, image2, ...]
             return [None, None] + results
         elif return_sample:
+            # This is what render_animation expects: sample, image
             return None, results[0] if results else None
         elif return_latent:
+            # Return [latent, image1, image2, ...]
             return [None] + results
         elif return_c:
+            # Return [conditioning, image1, image2, ...]
             return [None] + results
         else:
+            # Just return the images
             return results
         
     except Exception as e:
@@ -114,6 +129,7 @@ def generate_original_pipeline(args, root, frame=0, return_latent=False, return_
     """
     
     if hasattr(root, 'lora_manager') and hasattr(root, 'characters'):
+        # Get current characters from the prompt
         current_characters = []
         for character in root.characters:
             if character.unique_identifier.lower() in args.prompt.lower():
@@ -157,6 +173,7 @@ def generate_original_pipeline(args, root, frame=0, return_latent=False, return_
     if not args.use_init and args.strength > 0 and args.strength_0_no_init:
         args.strength = 0
 
+    # Mask functions
     if args.use_mask:
         assert args.mask_file is not None or mask_image is not None, "use_mask==True: An mask image is required for a mask. Please enter a mask_file or use an init image with an alpha channel"
         assert args.use_init, "use_mask==True: use_init is required for a mask"
@@ -178,6 +195,7 @@ def generate_original_pipeline(args, root, frame=0, return_latent=False, return_
 
     assert not ( (args.use_mask and args.overlay_mask) and (args.init_sample is None and init_image is None)), "Need an init image when use_mask == True and overlay_mask == True"
 
+    # Init MSE loss image
     init_mse_image = None
     if args.init_mse_scale and args.init_mse_image != None and args.init_mse_image != '':
         init_mse_image, mask_image = load_img(args.init_mse_image,
@@ -190,6 +208,7 @@ def generate_original_pipeline(args, root, frame=0, return_latent=False, return_
 
     t_enc = int((1.0-args.strength) * args.steps)
 
+    # Noise schedule for the k-diffusion samplers (used for masking)
     k_sigmas = model_wrap.get_sigmas(args.steps)
     args.clamp_schedule = dict(zip(k_sigmas.tolist(), np.linspace(args.clamp_start,args.clamp_stop,args.steps+1)))
     k_sigmas = k_sigmas[len(k_sigmas)-t_enc-1:]
@@ -205,6 +224,7 @@ def generate_original_pipeline(args, root, frame=0, return_latent=False, return_
     else:
         colormatch_image = None
 
+    # Loss functions
     if args.init_mse_scale != 0:
         if args.decode_method == "linear":
             mse_loss_fn = make_mse_loss(root.model.linear_decode(root.model.get_first_stage_encoding(root.model.encode_first_stage(init_mse_image.to(root.device)))))
@@ -214,7 +234,7 @@ def generate_original_pipeline(args, root, frame=0, return_latent=False, return_
         mse_loss_fn = None
 
     if args.colormatch_scale != 0:
-        _,_ = get_color_palette(root, args.colormatch_n_colors, colormatch_image, verbose=True)
+        _,_ = get_color_palette(root, args.colormatch_n_colors, colormatch_image, verbose=True) # display target color palette outside the latent space
         if args.decode_method == "linear":
             grad_img_shape = (int(args.W/args.f), int(args.H/args.f))
             colormatch_image = root.model.linear_decode(root.model.get_first_stage_encoding(root.model.encode_first_stage(colormatch_image.to(root.device))))
@@ -255,6 +275,7 @@ def generate_original_pipeline(args, root, frame=0, return_latent=False, return_
         [aesthetics_loss_fn,        args.aesthetics_scale]
     ]
 
+    # Conditioning gradients not implemented for ddim or PLMS
     assert not( any([cond_fs[1]!=0 for cond_fs in loss_fns_scales]) and (args.sampler in ["ddim","plms"]) ), "Conditioning gradients not implemented for ddim or plms. Please use a different sampler."
 
     callback = SamplerCallback(args=args,
@@ -276,8 +297,8 @@ def generate_original_pipeline(args, root, frame=0, return_latent=False, return_
                                     args.gradient_add_to, 
                                     args.cond_uncond_sync,
                                     decode_method=args.decode_method,
-                                    grad_inject_timing_fn=grad_inject_timing_fn,
-                                    grad_consolidate_fn=None,
+                                    grad_inject_timing_fn=grad_inject_timing_fn, # option to use grad in only a few of the steps
+                                    grad_consolidate_fn=None, # function to add grad to image fn(img, grad, sigma)
                                     verbose=False)
 
     results = []
@@ -310,11 +331,12 @@ def generate_original_pipeline(args, root, frame=0, return_latent=False, return_
                             cb=callback,
                             verbose=False)
                     else:
+                        # args.sampler == 'plms' or args.sampler == 'ddim':
                         if init_latent is not None and args.strength > 0:
                             z_enc = sampler.stochastic_encode(init_latent, torch.tensor([t_enc]*batch_size).to(root.device))
                         else:
                             z_enc = torch.randn([args.n_samples, args.C, args.H // args.f, args.W // args.f], device=root.device)
-                        if args.sampler in ['plms','ddim']:
+                        if args.sampler in ['plms','ddim']: # no "decode" function in plms, so use "sample"
                             shape = [args.C, args.H // args.f, args.W // args.f]
                             samples, _ = sampler.sample(S=args.steps,
                                                             conditioning=c,
@@ -335,6 +357,7 @@ def generate_original_pipeline(args, root, frame=0, return_latent=False, return_
                     x_samples = root.model.decode_first_stage(samples)
 
                     if args.use_mask and args.overlay_mask:
+                        # Overlay the masked image after the image is generated
                         if args.init_sample_raw is not None:
                             img_original = args.init_sample_raw
                         elif init_image is not None:
@@ -379,6 +402,8 @@ def generate(args, root, frame=0, return_latent=False, return_sample=False, retu
     """
     Main generate function - toggle between pipelines here
     """
+    
+    # TOGGLE BETWEEN PIPELINES BY COMMENTING/UNCOMMENTING THESE LINES:
     
     # Use simple diffusers pipeline
     #return generate_simple_pipeline(args, root, frame, return_latent, return_sample, return_c)
