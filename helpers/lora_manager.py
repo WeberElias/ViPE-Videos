@@ -68,15 +68,11 @@ class LoRAManager:
         self.device = device
         self.current_loras = {}
         self.lora_cache = {}
-        self.base_unet = None
-        self.base_text_encoder = None
         
-        # Store references to original models for restoration
-        if hasattr(model, 'unet'):
-            self.base_unet = model.unet
-        if hasattr(model, 'text_encoder'):
-            self.base_text_encoder = model.text_encoder
-            
+        # Store clean base models once at initialization
+        self.base_unet = model.model.diffusion_model
+        self.base_text_encoder = model.cond_stage_model
+
     def load_character_loras(self, characters: List) -> None:
         """
         Preload all character LoRA configurations
@@ -142,10 +138,10 @@ class LoRAManager:
 
     def apply_character_loras(self, characters: List) -> None:
         """
-        Apply LoRA weights for specific characters using PEFT
+        Apply LoRA weights for specific characters using PEFT (single character)
         
         Args:
-            characters: List of Character objects to apply
+            characters: List of Character objects to apply (only last one will be active)
         """
         # Clear current LoRAs first
         self.clear_loras()
@@ -154,13 +150,14 @@ class LoRAManager:
             return
             
         try:
-            for character in characters:
-                if character.name in self.lora_cache:
-                    print(f"Applying LoRA for {character.name}")
-                    self._apply_character_lora(character.name, self.lora_cache[character.name])
-                    self.current_loras[character.name] = True
-                else:
-                    print(f"Warning: No cached LoRA found for {character.name}")
+            # Apply only the last character's LoRA (single LoRA approach)
+            character = characters[-1]  # Take the last character if multiple
+            
+            if character.name in self.lora_cache:
+                self._apply_character_lora(character.name, self.lora_cache[character.name])
+                self.current_loras[character.name] = True
+            else:
+                print(f"Warning: No cached LoRA found for {character.name}")
                     
         except Exception as e:
             print(f"Error applying LoRAs: {e}")
@@ -169,29 +166,25 @@ class LoRAManager:
 
     def _apply_character_lora(self, character_name: str, lora_data: Dict[str, Any]) -> None:
         """
-        Apply a single character's LoRA using PEFT (same approach as simple pipeline)
+        Apply a single character's LoRA using PEFT (single LoRA approach)
         """
         try:
             unet_dir = lora_data['unet_dir']
             text_encoder_dir = lora_data['text_encoder_dir']
             
-            # Apply UNet LoRA using PEFT (same as simple pipeline)
+            # Apply UNet LoRA - always start from clean base model
             if os.path.exists(unet_dir):
-                # Wrap the LDM UNet with PEFT
                 self.model.model.diffusion_model = PeftModel.from_pretrained(
-                    self.model.model.diffusion_model, 
+                    self.base_unet,  # Always use stored clean model
                     unet_dir
                 )
-                print(f"UNet LoRA applied for {character_name}")
         
-            # Apply Text Encoder LoRA using PEFT  
+            # Apply Text Encoder LoRA - always start from clean base model
             if os.path.exists(text_encoder_dir):
-                # Wrap the LDM text encoder with PEFT
                 self.model.cond_stage_model = PeftModel.from_pretrained(
-                    self.model.cond_stage_model,
+                    self.base_text_encoder,  # Always use stored clean model
                     text_encoder_dir
                 )
-                print(f"Text Encoder LoRA applied for {character_name}")
         
             print(f"{character_name}: ✓ APPLIED")
             
@@ -202,18 +195,14 @@ class LoRAManager:
 
     def clear_loras(self) -> None:
         """
-        Remove all currently applied LoRA weights by restoring base models
+        Remove all currently applied LoRA adapters by restoring base models
         """
         try:
             if self.current_loras:
-                # Restore original UNet (unwrap from PEFT)
-                if hasattr(self.model.model.diffusion_model, 'base_model'):
-                    self.model.model.diffusion_model = self.model.model.diffusion_model.base_model
-            
-                # Restore original Text Encoder (unwrap from PEFT)
-                if hasattr(self.model.cond_stage_model, 'base_model'):
-                    self.model.cond_stage_model = self.model.cond_stage_model.base_model
-            
+                # Restore original base models
+                self.model.model.diffusion_model = self.base_unet
+                self.model.cond_stage_model = self.base_text_encoder
+                
                 self.current_loras.clear()
                 
         except Exception as e:
