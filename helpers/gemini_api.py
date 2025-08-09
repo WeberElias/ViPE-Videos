@@ -31,55 +31,27 @@ def call_gemini(model, prompt):
 def load_prompt_template(prompt_file_path=None):
     """
     Load the character generation prompt template from file
-    
-    Args:
-        prompt_file_path: Path to prompt file. If None, uses default path.
-        
-    Returns:
-        str: The prompt template with {json_content} placeholder
     """
     if prompt_file_path is None:
-        # Default path relative to this file
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        prompt_file_path = os.path.join(os.path.dirname(current_dir), "prompts", "single_character_generation_prompt.txt") # single_character... or character_generation_prompt.txt
+        prompt_file_path = os.path.join(os.path.dirname(current_dir), "prompts", "single_character_generation_prompt.txt")
     
     try:
         with open(prompt_file_path, 'r', encoding='utf-8') as f:
-            return f.read().strip()
+            content = f.read().strip()
+            
+            # Verify the template has the required placeholder
+            if '{json_content}' not in content:
+                print(f"Error: Prompt template missing {{json_content}} placeholder")
+                return None
+                
+            return content
     except FileNotFoundError:
-        print(f"Warning: Prompt file not found at {prompt_file_path}, using default prompt")
-        # Fallback to original hardcoded prompt
-        return """I'm going to provide you the lyrics of a song and an interpretation of those lyrics. The interpretations are a descriptive interpretation to be used as prompts for image generation. The lyrics are marked as "text" and the interpretations as "prompt". Your task is to:
-
-Create a short list of no more than five characters with very brief visual descriptions, like:
-
-[
-  {{
-    "name": "Alice",
-    "description": "Woman, middle-aged, brown hair, green eyes"
-  }}
-]
-
-Use this exact JSON structure. Do not use real persons. Characters must be named (e.g., <Alice>) and referenced by name in the prompts. Reuse existing characters whenever possible. Adjust prompts to incorporate characters and improve coherence, while keeping the original descriptive intent.
-
-If an interpretation does not clearly connect to any character, adjust the prompt to make it fit one of the existing or newly created characters.
-
-Return your output in the exact same format and structure as the interpretation file I sent, with only the adjusted prompts changed.
-
-At the end of the file, include the character list in the JSON format specified above.
-
-Constraints:
-
-- No more than 5 characters total.
-- No real persons.
-- No explanations or extra commentary.
-- Character descriptions must be very short and visual only.
-- Final character list must be in JSON format as shown.
-- DO NOT create more than five characters
-
-Here is the lyrics interpretation file:
-
-{{json_content}}"""
+        print(f"Error: Prompt file not found: {prompt_file_path}")
+        return None
+    except Exception as e:
+        print(f"Error reading prompt file: {e}")
+        return None
 
 def generate_characters(model, json_file_path, output_dir="./", prompt_file_path=None):
     """
@@ -105,6 +77,10 @@ def generate_characters(model, json_file_path, output_dir="./", prompt_file_path
         
         # Load prompt template from file
         prompt_template = load_prompt_template(prompt_file_path)
+
+        if prompt_template is None:
+            print("Error: Failed to load prompt template")
+            return False, None, None
         
         # Format the prompt with the JSON content
         prompt = prompt_template.format(json_content=json_content)
