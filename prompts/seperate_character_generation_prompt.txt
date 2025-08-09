@@ -28,3 +28,5 @@ Constraints:
 - NEVER include two characters in a single line/prompt - each prompt must focus on only one character
 
 Here is the lyrics
+
+{json_content}
