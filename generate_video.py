@@ -275,6 +275,41 @@ def main():
         if characters_needing_training:
             print(f"Need to train {len(characters_needing_training)} characters")
             
+            # Allow user to modify character descriptions before training
+            print("\n=== Character Description Review ===")
+            for i, character in enumerate(characters_needing_training):
+                print(f"\nCharacter {i+1}: {character.name}")
+                print(f"Current description: {character.description}")
+                print(f"Unique identifier: {character.unique_identifier}")
+                
+                while True:
+                    user_input = input("Keep current description? (y/edit): ").lower().strip()
+                    
+                    if user_input in ['y', 'yes']:
+                        break
+                    elif user_input == 'edit':
+                        new_description = input(f"Enter new description for {character.name}: ").strip()
+                        if new_description:
+                            character.description = new_description
+                            print(f"Updated description: {character.description}")
+                            break
+                        else:
+                            print("Description cannot be empty. Please try again.")
+                    else:
+                        print("Please enter 'y' or 'edit'")
+            
+            print("\n=== Final Character Descriptions ===")
+            for character in characters_needing_training:
+                print(f"{character.name}: {character.description}")
+                print(f"  Unique ID: {character.unique_identifier}")
+            
+            # Confirm before proceeding
+            confirm = input("\nProceed with training? (y/n): ").lower().strip()
+            if confirm not in ['y', 'yes']:
+                print("Training cancelled.")
+                characters_needing_training = []  # Skip training
+        
+        if characters_needing_training:
             # Create training folders for characters that need training
             training_folders_created = []
             for character in characters_needing_training:
@@ -284,7 +319,7 @@ def main():
                 character.training_images = training_folder
                 training_folders_created.append((character.name, training_folder))
             
-            print("Training folders created. Add 3-10 images per character:")
+            print("\nTraining folders created. Add 3-10 images per character:")
             for name, folder in training_folders_created:
                 print(f"  {name}: {folder}")
             
@@ -300,6 +335,8 @@ def main():
                                            if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
                             if len(image_files) >= 3:
                                 characters_to_train.append(character)
+                            else:
+                                print(f"Warning: {character.name} has only {len(image_files)} images (need at least 3)")
                     
                     if characters_to_train:
                         print(f"Training {len(characters_to_train)} characters...")
