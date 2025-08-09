@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# filepath: /home/webereli/bar/ViPE-Videos/train_dreambooth_script.py
+# filepath: /home/webereli/bar/ViPE-Videos/helpers/train_dreambooth_script.py
 
 import subprocess
 import sys
@@ -7,41 +7,26 @@ import os
 from pathlib import Path
 
 def train_dreambooth(
-    model_name="runwayml/stable-diffusion-v1-5",
-    instance_dir="./instance_images",
-    class_dir="./class_images", 
-    output_dir="./dreambooth_output",
-    instance_prompt="a photo of sks person",
-    class_prompt="a photo of person",
-    resolution=512,
-    train_batch_size=1,
-    learning_rate=2e-4,
-    max_train_steps=400,
-    lora_r=16,
-    lora_alpha=27,
-    lora_text_encoder_r=16,
-    lora_text_encoder_alpha=17,
-    num_class_images=200
+    model_name,
+    instance_dir,
+    class_dir, 
+    output_dir,
+    instance_prompt,
+    class_prompt,
+    resolution,
+    train_batch_size,
+    learning_rate,
+    max_train_steps,
+    lora_r,
+    lora_alpha,
+    lora_text_encoder_r,
+    lora_text_encoder_alpha,
+    num_class_images
 ):
     """
     Train a Dreambooth model with LoRA
     
-    Args:
-        model_name: Pretrained model name or path
-        instance_dir: Directory containing instance images
-        class_dir: Directory containing class images  
-        output_dir: Directory to save trained model
-        instance_prompt: Prompt for instance images
-        class_prompt: Prompt for class images
-        resolution: Training resolution
-        train_batch_size: Batch size for training
-        learning_rate: Learning rate
-        max_train_steps: Maximum training steps
-        lora_r: LoRA rank
-        lora_alpha: LoRA alpha
-        lora_text_encoder_r: LoRA rank for text encoder
-        lora_text_encoder_alpha: LoRA alpha for text encoder
-        num_class_images: Number of class images to generate
+    All parameters are required and passed from train_character()
     """
     
     # Validate directories exist
@@ -57,7 +42,7 @@ def train_dreambooth(
     
     # Build command using your existing script with optimized parameters
     cmd = [
-        "accelerate", "launch", script_path,  # Use the existing script
+        "accelerate", "launch", script_path,
         f"--pretrained_model_name_or_path={model_name}",
         f"--instance_data_dir={instance_dir}",
         f"--class_data_dir={class_dir}",
@@ -77,21 +62,18 @@ def train_dreambooth(
         f"--lora_text_encoder_alpha={lora_text_encoder_alpha}",
         f"--learning_rate={learning_rate}",
         f"--max_train_steps={max_train_steps}",
-        "--mixed_precision=fp16",  # Speed up training
-        "--gradient_accumulation_steps=2",  # Better gradients with small batch size
-        "--checkpointing_steps=200",  # Gradient checkpointing for memory efficiency  
-        "--enable_xformers_memory_efficient_attention",  # Memory optimization
-        "--seed=42"  # Reproducible results
+        "--mixed_precision=fp16",
+        "--gradient_accumulation_steps=2",
+        "--checkpointing_steps=200",
+        "--enable_xformers_memory_efficient_attention",
+        "--seed=42"
     ]
     
-    print("Starting Dreambooth training with optimized parameters...")
-    print(f"Using script: {script_path}")
+    print("Starting Dreambooth training...")
     print(f"Base model: {model_name}")
     print(f"Training steps: {max_train_steps}")
     print(f"Learning rate: {learning_rate}")
     print(f"LoRA rank: {lora_r}")
-    print(f"Resolution: {resolution}")
-    print(f"Command: {' '.join(cmd)}")
     
     try:
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
@@ -108,40 +90,36 @@ def train_dreambooth(
         print("pip install accelerate")
         return False, None
 
-def train_character(character, saving_dir, num_class_images=200, max_train_steps=400, learning_rate=0.0002):
+def train_character(character, saving_dir):
     """
-    Train a character using DreamBooth LoRA
+    Train a character using DreamBooth LoRA with fixed parameters
     """
     print(f"Training character: {character.name}")
     
-    # Model path setup - use HuggingFace model for training compatibility
-    # The .ckpt file will be used for inference, ensuring compatibility
-    base_model_path = "runwayml/stable-diffusion-v1-5"
-    print(f"Using HuggingFace model for training: {base_model_path}")
+    # Fixed training parameters - change here to modify training settings
+    num_class_images = 1000
+    max_train_steps = 400
+    learning_rate = 0.0002
     
     # Prepare character-specific paths and prompts
     folder_name = character.name.lower().replace(' ', '_').replace(',', '')
     output_dir = os.path.join(saving_dir, "models", folder_name)
-    
-    # Create class images directory in saving_dir
     class_dir = os.path.join(saving_dir, "class_images")
     
     # Use the character's unique identifier for consistent training
     instance_prompt = f"a photo of {character.unique_identifier} {character.description}"
-    class_prompt = f"a photo of {character.description.split(',')[0].strip()}"  # Use first part of description as class
+    class_prompt = f"a photo of {character.description.split(',')[0].strip()}"
     
-    print(f"Unique identifier: {character.unique_identifier}")
     print(f"Instance prompt: {instance_prompt}")
     print(f"Class prompt: {class_prompt}")
     print(f"Output directory: {output_dir}")
-    print(f"Class images directory: {class_dir}")
+    print(f"Training with: {num_class_images} class images, {max_train_steps} steps, lr={learning_rate}")
     
-    # Check for required training data
+    # Validate training data
     if not hasattr(character, 'training_images') or not os.path.exists(character.training_images):
         print(f"Error: No training images found for {character.name}")
         return False, None
     
-    # Count training images
     image_files = [f for f in os.listdir(character.training_images) 
                    if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
     if len(image_files) < 3:
@@ -150,18 +128,24 @@ def train_character(character, saving_dir, num_class_images=200, max_train_steps
     
     print(f"Found {len(image_files)} training images")
     
-    # Call the training function
+    # Call the training function with all required parameters
     try:
         success, model_path = train_dreambooth(
-            model_name=base_model_path,
+            model_name="runwayml/stable-diffusion-v1-5",
             instance_dir=character.training_images,
             class_dir=class_dir,
             output_dir=output_dir,
             instance_prompt=instance_prompt,
             class_prompt=class_prompt,
-            num_class_images=num_class_images,
+            resolution=512,
+            train_batch_size=1,
+            learning_rate=learning_rate,
             max_train_steps=max_train_steps,
-            learning_rate=learning_rate
+            lora_r=16,
+            lora_alpha=27,
+            lora_text_encoder_r=16,
+            lora_text_encoder_alpha=17,
+            num_class_images=num_class_images
         )
         
         if success:
