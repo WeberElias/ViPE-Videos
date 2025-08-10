@@ -398,6 +398,95 @@ def generate_original_pipeline(args, root, frame=0, return_latent=False, return_
                         results.append(image)
     return results
 
+def generate_blended_pipeline(args, root, frame=0, return_latent=False, return_sample=False, return_c=False):
+
+    try:
+        pipe = StableDiffusionPipeline.from_pretrained(
+            "runwayml/stable-diffusion-v1-5",
+            torch_dtype=torch.float16,
+            safety_checker=None,
+            requires_safety_checker=False
+        ).to(root.device)
+
+        # Apply character LoRAs (same approach as in generate_simple_pipeline)
+        if hasattr(root, 'lora_manager') and hasattr(root, 'characters'):
+            current_characters = []
+            for character in root.characters:
+                if character.unique_identifier.lower() in args.prompt.lower():
+                    current_characters.append(character)
+            if current_characters:
+                for character in current_characters:
+                    if hasattr(root.lora_manager, 'lora_cache') and character.name in root.lora_manager.lora_cache:
+                        lora_data = root.lora_manager.lora_cache[character.name]
+                        unet_dir = lora_data['unet_dir']
+                        text_encoder_dir = lora_data['text_encoder_dir']
+                        if os.path.exists(unet_dir):
+                            pipe.unet = PeftModel.from_pretrained(pipe.unet, unet_dir)
+                        if os.path.exists(text_encoder_dir):
+                            pipe.text_encoder = PeftModel.from_pretrained(pipe.text_encoder, text_encoder_dir)
+                        break  # apply first matching character
+
+        pipe.set_progress_bar_config(disable=True)
+
+        with torch.no_grad():
+            result = pipe(
+                prompt=args.prompt,
+                height=args.H,
+                width=args.W,
+                num_inference_steps=args.steps,
+                guidance_scale=args.scale,
+                num_images_per_prompt=args.n_samples
+            )
+
+        base_images = list(result.images)
+
+        # Blend each image with the previous one (first stays as-is)
+        blended_images = []
+        prev = None
+        for img in base_images:
+            if prev is None:
+                blended_images.append(img)
+            else:
+                a = prev
+                b = img
+                if a.mode != b.mode:
+                    b = b.convert(a.mode)
+                if a.size != b.size:
+                    b = b.resize(a.size, Image.LANCZOS)
+                blended_images.append(Image.blend(a, b, 0.5))
+            prev = img  # use previous original as reference
+
+        # Convert to desired output bit depth
+        results = []
+        for image in blended_images:
+            if args.bit_depth_output == 8:
+                processed = image  # PIL Image
+            elif args.bit_depth_output == 32:
+                processed = (np.array(image).astype(np.float32) / 255.0)
+            else:  # 16-bit
+                processed = (np.array(image).astype(np.uint16) * 256)
+            results.append(processed)
+
+        if return_sample and return_latent and return_c:
+            return [None, None, None] + results
+        elif return_sample and return_latent:
+            return [None, None] + results
+        elif return_sample:
+            return None, results[0] if results else None
+        elif return_latent:
+            return [None] + results
+        elif return_c:
+            return [None] + results
+        else:
+            return results
+
+    except Exception as e:
+        print(f"Blended pipeline failed: {e}")
+        import traceback
+        traceback.print_exc()
+        print("Falling back to simple pipeline...")
+        return generate_simple_pipeline(args, root, frame, return_latent, return_sample, return_c)
+
 def generate(args, root, frame=0, return_latent=False, return_sample=False, return_c=False):
     """
     Main generate function - toggle between pipelines here
@@ -409,4 +498,8 @@ def generate(args, root, frame=0, return_latent=False, return_sample=False, retu
     #return generate_simple_pipeline(args, root, frame, return_latent, return_sample, return_c)
     
     # Use original complex LDM pipeline  
-    return generate_original_pipeline(args, root, frame, return_latent, return_sample, return_c)
+    #return generate_original_pipeline(args, root, frame, return_latent, return_sample, return_c)
+
+    # Use blended diffusers pipeline
+    return generate_blended_pipeline(args, root, frame, return_latent, return_sample, return_c)
+    
