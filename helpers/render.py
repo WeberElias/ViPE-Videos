@@ -115,9 +115,26 @@ def render_image_batch(args, prompts, root):
     # when doing large batches don't flood browser with images
     clear_between_batches = args.n_batch >= 32
 
-    for iprompt, prompt in enumerate(prompts):  
-        args.prompt = prompt
-        args.clip_prompt = prompt
+    for iprompt, prompt_data in enumerate(prompts):  
+        # Handle both old string format and new dictionary format
+        if isinstance(prompt_data, dict):
+            args.prompt = prompt_data['prompt']
+            current_characters = prompt_data.get('characters', [])
+            
+            # Apply LoRA only for characters that have trained models
+            if hasattr(root, 'lora_manager') and root.lora_manager and current_characters:
+                # Filter characters to only those with model_path
+                characters_with_models = [char for char in current_characters if hasattr(char, 'model_path') and char.model_path]
+                if characters_with_models:
+                    print(f"Applying LoRA for characters: {[char.name for char in characters_with_models]}")
+                    root.lora_manager.apply_character_loras(characters_with_models)
+                else:
+                    print(f"Characters in prompt but no trained models: {[char.name for char in current_characters]}")
+        else:
+            # Old string format
+            args.prompt = prompt_data
+            
+        args.clip_prompt = args.prompt
         print(f"Prompt {iprompt+1} of {len(prompts)}")
         print(f"{args.prompt}")
 
@@ -411,7 +428,39 @@ def render_animation(args, anim_args, animation_prompts, root):
             args.strength = max(0.0, min(1.0, strength))
 
         # grab prompt for current frame
-        args.prompt = prompt_series[frame_idx]
+        current_prompt_data = prompt_series[frame_idx]
+        
+        # Handle both old string format and new dictionary format
+        if isinstance(current_prompt_data, dict):
+            args.prompt = current_prompt_data['prompt']
+            current_characters = current_prompt_data.get('characters', [])
+            
+            # Apply LoRA only for characters that have trained models
+            if hasattr(root, 'lora_manager') and root.lora_manager and current_characters:
+                # Filter characters to only those with model_path
+                characters_with_models = [char for char in current_characters if hasattr(char, 'model_path') and char.model_path]
+                if characters_with_models:
+                    print(f"Frame {frame_idx}: Applying LoRA for characters: {[char.name for char in characters_with_models]}")
+                    root.lora_manager.apply_character_loras(characters_with_models)
+                    
+                    # Validate LoRA application
+                    validation_results = root.lora_manager.validate_lora_application()
+                    for char_name, is_applied in validation_results.items():
+                        status = "APPLIED" if is_applied else "FAILED"
+                        print(f"  {char_name}: {status}")
+                else:
+                    print(f"Frame {frame_idx}: Characters in prompt but no trained models: {[char.name for char in current_characters]}")
+            else:
+                # Clear LoRAs if no characters in this frame
+                if hasattr(root, 'lora_manager') and root.lora_manager:
+                    if root.lora_manager.current_loras:
+                        print(f"Frame {frame_idx}: Clearing LoRAs (no characters in prompt)")
+                        root.lora_manager.clear_loras()
+        else:
+            # Old string format
+            args.prompt = current_prompt_data
+            current_characters = []
+        
         args.clip_prompt = args.prompt
         print(f"{args.prompt} {args.seed}")
         if not using_vid_init:
@@ -522,8 +571,25 @@ def render_interpolation(args, anim_args, animation_prompts, root):
 
     print(f"Preparing for interpolation of the following...")
 
-    for i, prompt in animation_prompts.items():
-        args.prompt = prompt
+    for i, prompt_data in animation_prompts.items():
+        # Handle both old string format and new dictionary format
+        if isinstance(prompt_data, dict):
+            args.prompt = prompt_data['prompt']
+            current_characters = prompt_data.get('characters', [])
+            
+            # Apply LoRA only for characters that have trained models
+            if hasattr(root, 'lora_manager') and root.lora_manager and current_characters:
+                # Filter characters to only those with model_path
+                characters_with_models = [char for char in current_characters if hasattr(char, 'model_path') and char.model_path]
+                if characters_with_models:
+                    print(f"Applying LoRA for characters: {[char.name for char in characters_with_models]}")
+                    root.lora_manager.apply_character_loras(characters_with_models)
+                else:
+                    print(f"Characters in prompt but no trained models: {[char.name for char in current_characters]}")
+        else:
+            # Old string format
+            args.prompt = prompt_data
+            
         args.clip_prompt = args.prompt
 
         # sample the diffusion model

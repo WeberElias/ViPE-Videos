@@ -12,6 +12,10 @@ from torch import autocast
 from contextlib import nullcontext
 from einops import rearrange, repeat
 
+# ADD THESE IMPORTS FOR SIMPLE PIPELINE
+from diffusers import StableDiffusionPipeline
+from peft import PeftModel
+
 from .prompt import get_uc_and_c
 from .k_samplers import sampler_fn, make_inject_timing_fn
 from scipy.ndimage import gaussian_filter
@@ -26,7 +30,94 @@ from .load_images import load_img, load_mask_latent, prepare_mask, prepare_overl
 def add_noise(sample: torch.Tensor, noise_amt: float) -> torch.Tensor:
     return sample + torch.randn(sample.shape, device=sample.device) * noise_amt
 
-def generate(args, root, frame = 0, return_latent=False, return_sample=False, return_c=False):
+def generate_simple_pipeline(args, root, frame=0, return_latent=False, return_sample=False, return_c=False):
+    """
+    Simple diffusers-based generation pipeline
+    """
+
+    pipe = StableDiffusionPipeline.from_pretrained(
+        "runwayml/stable-diffusion-v1-5",
+        torch_dtype=torch.float16,
+        safety_checker=None,
+        requires_safety_checker=False
+    ).to(root.device)
+    
+    if hasattr(root, 'lora_manager') and hasattr(root, 'characters'):
+        # Get current characters from the prompt
+        current_characters = []
+        for character in root.characters:
+            if character.unique_identifier.lower() in args.prompt.lower():
+                current_characters.append(character)
+        
+        if current_characters:
+            for character in current_characters:
+                if hasattr(root.lora_manager, 'lora_cache') and character.name in root.lora_manager.lora_cache:
+                    lora_data = root.lora_manager.lora_cache[character.name]
+                    unet_dir = lora_data['unet_dir']
+                    text_encoder_dir = lora_data['text_encoder_dir']
+                    
+                    # Apply UNet LoRA
+                    if os.path.exists(unet_dir):
+                        pipe.unet = PeftModel.from_pretrained(pipe.unet, unet_dir)
+                    
+                    # Apply Text Encoder LoRA
+                    if os.path.exists(text_encoder_dir):
+                        pipe.text_encoder = PeftModel.from_pretrained(pipe.text_encoder, text_encoder_dir)
+                    
+                    break
+    
+    # Set progress bar
+    pipe.set_progress_bar_config(disable=True)
+    
+    # Generate image
+    with torch.no_grad():
+        result = pipe(
+            prompt=args.prompt,
+            height=args.H,
+            width=args.W,
+            num_inference_steps=args.steps,
+            guidance_scale=args.scale,
+            num_images_per_prompt=args.n_samples
+        )
+    
+    # Convert results to match original format expectations
+    results = []
+    
+    for image in result.images:
+        # Convert PIL to format expected by the rest of the system
+        if args.bit_depth_output == 8:
+            processed_image = image  # PIL Image for 8-bit
+        elif args.bit_depth_output == 32:
+            image_array = np.array(image).astype(np.float32) / 255.0
+            processed_image = image_array
+        else:  # 16-bit
+            image_array = (np.array(image) * 256).astype(np.uint16)
+            processed_image = image_array
+        
+        results.append(processed_image)
+    
+    # Return format that matches what render.py expects
+    if return_sample and return_latent and return_c:
+        # Return [latent, sample, conditioning, image1, image2, ...]
+        return [None, None, None] + results  # Dummy values for latent, sample, c
+    elif return_sample and return_latent:
+        # Return [latent, sample, image1, image2, ...]
+        return [None, None] + results
+    elif return_sample:
+        # This is what render_animation expects: sample, image
+        return None, results[0] if results else None
+    elif return_latent:
+        # Return [latent, image1, image2, ...]
+        return [None] + results
+    elif return_c:
+        # Return [conditioning, image1, image2, ...]
+        return [None] + results
+    else:
+        # Just return the images
+        return results
+        
+
+def generate_original_pipeline(args, root, frame=0, return_latent=False, return_sample=False, return_c=False):
     seed_everything(args.seed)
     os.makedirs(args.outdir, exist_ok=True)
 
@@ -290,3 +381,18 @@ def generate(args, root, frame = 0, return_latent=False, return_sample=False, re
                         image = uint_number(x_sample, args.bit_depth_output)
                         results.append(image)
     return results
+
+def generate(args, root, frame=0, return_latent=False, return_sample=False, return_c=False):
+    """
+    Main generate function - toggle between pipelines here
+    """
+    
+    # TOGGLE BETWEEN PIPELINES BY COMMENTING/UNCOMMENTING THESE LINES:
+    
+    # Use simple diffusers pipeline
+    #print("\n __________ Using simple pipeline _____________")
+    #return generate_simple_pipeline(args, root, frame, return_latent, return_sample, return_c)
+    
+    # Use original complex LDM pipeline  
+    print("\n __________ Using original pipeline _____________")
+    return generate_original_pipeline(args, root, frame, return_latent, return_sample, return_c)
