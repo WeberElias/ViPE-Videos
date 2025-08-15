@@ -394,5 +394,5 @@ def generate(args, root, frame=0, return_latent=False, return_sample=False, retu
     #return generate_simple_pipeline(args, root, frame, return_latent, return_sample, return_c)
     
     # Use original complex LDM pipeline  
-    #print("\n __________ Using original pipeline _____________")
-    #return generate_original_pipeline(args, root, frame, return_latent, return_sample, return_c)
+    print("\n __________ Using original pipeline _____________")
+    return generate_original_pipeline(args, root, frame, return_latent, return_sample, return_c)
