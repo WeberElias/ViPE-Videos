@@ -186,7 +186,7 @@ class LoRAManager:
                     text_encoder_dir
                 )
         
-            print(f"{character_name}: ✓ APPLIED")
+            print(f"{character_name}: APPLIED")
             
         except Exception as e:
             print(f"Error applying LoRA for {character_name}: {e}")
@@ -209,27 +209,11 @@ class LoRAManager:
             print(f"Error clearing LoRAs: {e}")
 
     def get_active_characters(self) -> List[str]:
+        # Might be redundant
         """
         Get list of currently active character names
         """
         return list(self.current_loras.keys())
-
-    def set_lora_scale(self, scale: float) -> None:
-        """
-        Set the LoRA scaling factor (if supported by the adapters)
-        
-        Args:
-            scale: Scaling factor for LoRA weights (default: 1.0)
-        """
-        try:
-            # PEFT models may support scaling through adapter configuration
-            if hasattr(self.model, 'unet') and hasattr(self.model.unet, 'peft_config'):
-                # This would depend on the specific PEFT version and capabilities
-                print(f"LoRA scale set to {scale} (implementation may vary by PEFT version)")
-            else:
-                print(f"LoRA scale setting requested ({scale}) but no active PEFT adapters found")
-        except Exception as e:
-            print(f"Error setting LoRA scale: {e}")
 
     def validate_lora_application(self) -> Dict[str, bool]:
         """
@@ -265,24 +249,6 @@ class LoRAManager:
             validation_results[character_name] = is_valid
     
         return validation_results
-
-    def get_lora_influence_summary(self) -> str:
-        """
-        Get a summary of current LoRA influence on the model
-        """
-        if not self.current_loras:
-            return "No LoRA adapters currently active"
-        
-        summary = f"Active LoRA adapters: {len(self.current_loras)}\n"
-        summary += f"Characters: {list(self.current_loras.keys())}\n"
-        
-        # Add PEFT-specific information
-        if hasattr(self.model, 'unet') and hasattr(self.model.unet, 'peft_config'):
-            summary += f"UNet adapters: {list(self.model.unet.peft_config.keys())}\n"
-        if hasattr(self.model, 'text_encoder') and hasattr(self.model.text_encoder, 'peft_config'):
-            summary += f"Text Encoder adapters: {list(self.model.text_encoder.peft_config.keys())}\n"
-        
-        return summary
     
     def test_lora_loading(self, character_name: str) -> bool:
         """
