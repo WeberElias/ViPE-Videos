@@ -34,99 +34,13 @@ def generate_simple_pipeline(args, root, frame=0, return_latent=False, return_sa
     """
     Simple diffusers-based generation pipeline
     """
-    try:
-        pipe = StableDiffusionPipeline.from_pretrained(
-            "runwayml/stable-diffusion-v1-5",
-            torch_dtype=torch.float16,
-            safety_checker=None,
-            requires_safety_checker=False
-        ).to(root.device)
-        
-        if hasattr(root, 'lora_manager') and hasattr(root, 'characters'):
-            # Get current characters from the prompt
-            current_characters = []
-            for character in root.characters:
-                if character.unique_identifier.lower() in args.prompt.lower():
-                    current_characters.append(character)
-            
-            if current_characters:
-                for character in current_characters:
-                    if hasattr(root.lora_manager, 'lora_cache') and character.name in root.lora_manager.lora_cache:
-                        lora_data = root.lora_manager.lora_cache[character.name]
-                        unet_dir = lora_data['unet_dir']
-                        text_encoder_dir = lora_data['text_encoder_dir']
-                        
-                        # Apply UNet LoRA
-                        if os.path.exists(unet_dir):
-                            pipe.unet = PeftModel.from_pretrained(pipe.unet, unet_dir)
-                        
-                        # Apply Text Encoder LoRA
-                        if os.path.exists(text_encoder_dir):
-                            pipe.text_encoder = PeftModel.from_pretrained(pipe.text_encoder, text_encoder_dir)
-                        
-                        break
-        
-        # Set progress bar
-        pipe.set_progress_bar_config(disable=True)
-        
-        # Generate image
-        with torch.no_grad():
-            result = pipe(
-                prompt=args.prompt,
-                height=args.H,
-                width=args.W,
-                num_inference_steps=args.steps,
-                guidance_scale=args.scale,
-                num_images_per_prompt=args.n_samples
-            )
-        
-        # Convert results to match original format expectations
-        results = []
-        
-        for image in result.images:
-            # Convert PIL to format expected by the rest of the system
-            if args.bit_depth_output == 8:
-                processed_image = image  # PIL Image for 8-bit
-            elif args.bit_depth_output == 32:
-                image_array = np.array(image).astype(np.float32) / 255.0
-                processed_image = image_array
-            else:  # 16-bit
-                image_array = (np.array(image) * 256).astype(np.uint16)
-                processed_image = image_array
-            
-            results.append(processed_image)
-        
-        # Return format that matches what render.py expects
-        if return_sample and return_latent and return_c:
-            # Return [latent, sample, conditioning, image1, image2, ...]
-            return [None, None, None] + results  # Dummy values for latent, sample, c
-        elif return_sample and return_latent:
-            # Return [latent, sample, image1, image2, ...]
-            return [None, None] + results
-        elif return_sample:
-            # This is what render_animation expects: sample, image
-            return None, results[0] if results else None
-        elif return_latent:
-            # Return [latent, image1, image2, ...]
-            return [None] + results
-        elif return_c:
-            # Return [conditioning, image1, image2, ...]
-            return [None] + results
-        else:
-            # Just return the images
-            return results
-        
-    except Exception as e:
-        print(f"Simple pipeline failed: {e}")
-        import traceback
-        traceback.print_exc()
-        print("Falling back to original pipeline...")
-        return generate_original_pipeline(args, root, frame, return_latent, return_sample, return_c)
 
-def generate_original_pipeline(args, root, frame=0, return_latent=False, return_sample=False, return_c=False):
-    """
-    Original complex LDM pipeline
-    """
+    pipe = StableDiffusionPipeline.from_pretrained(
+        "runwayml/stable-diffusion-v1-5",
+        torch_dtype=torch.float16,
+        safety_checker=None,
+        requires_safety_checker=False
+    ).to(root.device)
     
     if hasattr(root, 'lora_manager') and hasattr(root, 'characters'):
         # Get current characters from the prompt
@@ -136,8 +50,74 @@ def generate_original_pipeline(args, root, frame=0, return_latent=False, return_
                 current_characters.append(character)
         
         if current_characters:
-            root.lora_manager.apply_character_loras(current_characters)
+            for character in current_characters:
+                if hasattr(root.lora_manager, 'lora_cache') and character.name in root.lora_manager.lora_cache:
+                    lora_data = root.lora_manager.lora_cache[character.name]
+                    unet_dir = lora_data['unet_dir']
+                    text_encoder_dir = lora_data['text_encoder_dir']
+                    
+                    # Apply UNet LoRA
+                    if os.path.exists(unet_dir):
+                        pipe.unet = PeftModel.from_pretrained(pipe.unet, unet_dir)
+                    
+                    # Apply Text Encoder LoRA
+                    if os.path.exists(text_encoder_dir):
+                        pipe.text_encoder = PeftModel.from_pretrained(pipe.text_encoder, text_encoder_dir)
+                    
+                    break
     
+    # Set progress bar
+    pipe.set_progress_bar_config(disable=True)
+    
+    # Generate image
+    with torch.no_grad():
+        result = pipe(
+            prompt=args.prompt,
+            height=args.H,
+            width=args.W,
+            num_inference_steps=args.steps,
+            guidance_scale=args.scale,
+            num_images_per_prompt=args.n_samples
+        )
+    
+    # Convert results to match original format expectations
+    results = []
+    
+    for image in result.images:
+        # Convert PIL to format expected by the rest of the system
+        if args.bit_depth_output == 8:
+            processed_image = image  # PIL Image for 8-bit
+        elif args.bit_depth_output == 32:
+            image_array = np.array(image).astype(np.float32) / 255.0
+            processed_image = image_array
+        else:  # 16-bit
+            image_array = (np.array(image) * 256).astype(np.uint16)
+            processed_image = image_array
+        
+        results.append(processed_image)
+    
+    # Return format that matches what render.py expects
+    if return_sample and return_latent and return_c:
+        # Return [latent, sample, conditioning, image1, image2, ...]
+        return [None, None, None] + results  # Dummy values for latent, sample, c
+    elif return_sample and return_latent:
+        # Return [latent, sample, image1, image2, ...]
+        return [None, None] + results
+    elif return_sample:
+        # This is what render_animation expects: sample, image
+        return None, results[0] if results else None
+    elif return_latent:
+        # Return [latent, image1, image2, ...]
+        return [None] + results
+    elif return_c:
+        # Return [conditioning, image1, image2, ...]
+        return [None] + results
+    else:
+        # Just return the images
+        return results
+        
+
+def generate_original_pipeline(args, root, frame=0, return_latent=False, return_sample=False, return_c=False):
     seed_everything(args.seed)
     os.makedirs(args.outdir, exist_ok=True)
 
@@ -150,9 +130,8 @@ def generate_original_pipeline(args, root, frame=0, return_latent=False, return_
     prompt = args.prompt
     assert prompt is not None
     data = [batch_size * [prompt]]
-    
     precision_scope = autocast if args.precision == "autocast" else nullcontext
-    
+
     init_latent = None
     mask_image = None
     init_image = None
@@ -168,9 +147,11 @@ def generate_original_pipeline(args, root, frame=0, return_latent=False, return_
         init_image = init_image.to(root.device)
         init_image = repeat(init_image, '1 ... -> b ...', b=batch_size)
         with precision_scope("cuda"):
-            init_latent = root.model.get_first_stage_encoding(root.model.encode_first_stage(init_image))
+            init_latent = root.model.get_first_stage_encoding(root.model.encode_first_stage(init_image))  # move to latent space        
 
     if not args.use_init and args.strength > 0 and args.strength_0_no_init:
+        #print("\nNo init image, but strength > 0. Strength has been auto set to 0, since use_init is False.")
+        #print("If you want to force strength > 0 with no init, please set strength_0_no_init to False.\n")
         args.strength = 0
 
     # Mask functions
@@ -178,6 +159,7 @@ def generate_original_pipeline(args, root, frame=0, return_latent=False, return_
         assert args.mask_file is not None or mask_image is not None, "use_mask==True: An mask image is required for a mask. Please enter a mask_file or use an init image with an alpha channel"
         assert args.use_init, "use_mask==True: use_init is required for a mask"
         assert init_latent is not None, "use_mask==True: An latent init image is required for a mask"
+
 
         mask = prepare_mask(args.mask_file if mask_image is None else mask_image, 
                             init_latent.shape, 
@@ -314,6 +296,7 @@ def generate_original_pipeline(args, root, frame=0, return_latent=False, return_
                         uc = root.model.get_learned_conditioning(batch_size * [""])
                         c = root.model.get_learned_conditioning(prompts)
 
+
                     if args.scale == 1.0:
                         uc = None
                     if args.init_c != None:
@@ -351,6 +334,7 @@ def generate_original_pipeline(args, root, frame=0, return_latent=False, return_
                         else:
                             raise Exception(f"Sampler {args.sampler} not recognised.")
 
+                    
                     if return_latent:
                         results.append(samples.clone())
 
@@ -398,95 +382,6 @@ def generate_original_pipeline(args, root, frame=0, return_latent=False, return_
                         results.append(image)
     return results
 
-def generate_blended_pipeline(args, root, frame=0, return_latent=False, return_sample=False, return_c=False):
-
-    try:
-        pipe = StableDiffusionPipeline.from_pretrained(
-            "runwayml/stable-diffusion-v1-5",
-            torch_dtype=torch.float16,
-            safety_checker=None,
-            requires_safety_checker=False
-        ).to(root.device)
-
-        # Apply character LoRAs (same approach as in generate_simple_pipeline)
-        if hasattr(root, 'lora_manager') and hasattr(root, 'characters'):
-            current_characters = []
-            for character in root.characters:
-                if character.unique_identifier.lower() in args.prompt.lower():
-                    current_characters.append(character)
-            if current_characters:
-                for character in current_characters:
-                    if hasattr(root.lora_manager, 'lora_cache') and character.name in root.lora_manager.lora_cache:
-                        lora_data = root.lora_manager.lora_cache[character.name]
-                        unet_dir = lora_data['unet_dir']
-                        text_encoder_dir = lora_data['text_encoder_dir']
-                        if os.path.exists(unet_dir):
-                            pipe.unet = PeftModel.from_pretrained(pipe.unet, unet_dir)
-                        if os.path.exists(text_encoder_dir):
-                            pipe.text_encoder = PeftModel.from_pretrained(pipe.text_encoder, text_encoder_dir)
-                        break  # apply first matching character
-
-        pipe.set_progress_bar_config(disable=True)
-
-        with torch.no_grad():
-            result = pipe(
-                prompt=args.prompt,
-                height=args.H,
-                width=args.W,
-                num_inference_steps=args.steps,
-                guidance_scale=args.scale,
-                num_images_per_prompt=args.n_samples
-            )
-
-        base_images = list(result.images)
-
-        # Blend each image with the previous one (first stays as-is)
-        blended_images = []
-        prev = None
-        for img in base_images:
-            if prev is None:
-                blended_images.append(img)
-            else:
-                a = prev
-                b = img
-                if a.mode != b.mode:
-                    b = b.convert(a.mode)
-                if a.size != b.size:
-                    b = b.resize(a.size, Image.LANCZOS)
-                blended_images.append(Image.blend(a, b, 0.5))
-            prev = img  # use previous original as reference
-
-        # Convert to desired output bit depth
-        results = []
-        for image in blended_images:
-            if args.bit_depth_output == 8:
-                processed = image  # PIL Image
-            elif args.bit_depth_output == 32:
-                processed = (np.array(image).astype(np.float32) / 255.0)
-            else:  # 16-bit
-                processed = (np.array(image).astype(np.uint16) * 256)
-            results.append(processed)
-
-        if return_sample and return_latent and return_c:
-            return [None, None, None] + results
-        elif return_sample and return_latent:
-            return [None, None] + results
-        elif return_sample:
-            return None, results[0] if results else None
-        elif return_latent:
-            return [None] + results
-        elif return_c:
-            return [None] + results
-        else:
-            return results
-
-    except Exception as e:
-        print(f"Blended pipeline failed: {e}")
-        import traceback
-        traceback.print_exc()
-        print("Falling back to simple pipeline...")
-        return generate_simple_pipeline(args, root, frame, return_latent, return_sample, return_c)
-
 def generate(args, root, frame=0, return_latent=False, return_sample=False, return_c=False):
     """
     Main generate function - toggle between pipelines here
@@ -495,11 +390,9 @@ def generate(args, root, frame=0, return_latent=False, return_sample=False, retu
     # TOGGLE BETWEEN PIPELINES BY COMMENTING/UNCOMMENTING THESE LINES:
     
     # Use simple diffusers pipeline
+    #print("\n __________ Using simple pipeline _____________")
     #return generate_simple_pipeline(args, root, frame, return_latent, return_sample, return_c)
     
     # Use original complex LDM pipeline  
+    #print("\n __________ Using original pipeline _____________")
     #return generate_original_pipeline(args, root, frame, return_latent, return_sample, return_c)
-
-    # Use blended diffusers pipeline
-    return generate_blended_pipeline(args, root, frame, return_latent, return_sample, return_c)
-    
