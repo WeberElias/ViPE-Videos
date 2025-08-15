@@ -5,7 +5,7 @@ Create ONLY ONE character with a very brief visual description, like:
 [
   {{
     "name": "Alex",
-    "description": "Young person, curly dark hair, wearing casual clothes"
+    "description": "Woman, middle-aged, brown hair, green eyes"
   }}
 ]
 
