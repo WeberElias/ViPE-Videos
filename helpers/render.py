@@ -188,13 +188,70 @@ def unsharp_mask(img, kernel_size=(5, 5), sigma=1.0, amount=1.0, threshold=0):
 
 
 def render_animation(args, anim_args, animation_prompts, root):
-    # handle hybrid video generation
-    if anim_args.animation_mode in ['2D','3D']:
-        if anim_args.hybrid_video_composite or anim_args.hybrid_video_motion in ['Affine', 'Perspective', 'Optical Flow']:
-            args, anim_args, inputfiles = render_animation_hybrid_video_generation(args, anim_args, root)
-            # path required by hybrid functions, even if hybrid_video_comp_save_extra_frames is False
-            hybrid_frame_path = os.path.join(args.outdir, 'hybridframes')
-
+    # Add MotionAdapter specific handling
+    using_motion_adapter = True  # TODO make this configurable
+    
+    if using_motion_adapter:
+        # Generate all frames at once using MotionAdapter
+        print("Generating video frames using MotionAdapter...")
+        
+        # Use the first prompt to generate the entire video sequence
+        first_prompt_data = list(animation_prompts.values())[0]
+        if isinstance(first_prompt_data, dict):
+            args.prompt = first_prompt_data['prompt']
+        else:
+            args.prompt = first_prompt_data
+        
+        # Set the number of frames to match max_frames
+        args.num_frames = min(anim_args.max_frames, 32)  # TODO check if this is correct. MotionAdapter typically works best with 16-32 frames
+        print(f"Generating {args.num_frames} frames with MotionAdapter...")
+            
+        # Generate the full video sequence
+        results = generate(args, root, frame=0)
+        
+        # Extract frames from results
+        if isinstance(results, list) and len(results) > 0:
+            # The results should contain the generated frames
+            generated_frames = results
+        else:
+            print("Error: No frames generated from MotionAdapter")
+            return
+        
+        # Now save each frame individually to disk
+        print(f"Saving {len(generated_frames)} frames to disk...")
+        for frame_idx, frame_image in enumerate(generated_frames):
+            if frame_idx >= anim_args.max_frames:
+                break
+                
+            filename = f"{args.timestring}_{frame_idx:05}.png"
+            save_8_16_or_32bpc_image(frame_image, args.outdir, filename, args.bit_depth_output)
+            
+            # Convert image to 8bpc to display
+            if args.bit_depth_output != 8:
+                display_image = convert_image_to_8bpc(frame_image, args.bit_depth_output)
+            else:
+                display_image = frame_image
+            
+            print(f"Saved frame {frame_idx}: {filename}")
+            if frame_idx % 5 == 0:  # Display every 5th frame to avoid flooding
+                display.clear_output(wait=True)
+                display.display(display_image)
+        
+        # If we generated fewer frames than max_frames, duplicate the last frame
+        if len(generated_frames) < anim_args.max_frames:
+            last_frame = generated_frames[-1]
+            print(f"Duplicating last frame to reach {anim_args.max_frames} total frames...")
+            
+            for frame_idx in range(len(generated_frames), anim_args.max_frames):
+                filename = f"{args.timestring}_{frame_idx:05}.png"
+                save_8_16_or_32bpc_image(last_frame, args.outdir, filename, args.bit_depth_output)
+                
+                if frame_idx % 10 == 0:  # Less frequent updates for duplicated frames
+                    print(f"Duplicated frame {frame_idx}: {filename}")
+        
+        print(f"Motion adapter animation complete! Generated {anim_args.max_frames} frames total.")
+        return  # Exit early since we've generated all frames
+    
     # animations use key framed prompts
     args.prompts = animation_prompts
 
