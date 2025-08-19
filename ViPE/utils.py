@@ -21,7 +21,7 @@ class dotdict(dict):
 
 def whisper_transcribe(  audio_fpath="audio.mp3", device='cuda'):
     model = whisper.load_model('large').to(device)
-    whispers= model.transcribe(audio_fpath)
+    whispers= model.transcribe(audio_fpath, language='en')
     return whispers
 
 def prepare_ViPE(args):
