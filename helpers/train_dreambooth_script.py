@@ -107,7 +107,7 @@ def train_character(character, saving_dir):
     class_dir = os.path.join(saving_dir, "class_images")
     
     # Use the character's unique identifier for consistent training
-    instance_prompt = f"a photo of {character.unique_identifier} {character.description}"
+    instance_prompt = f"a photo of {character.unique_identifier} {character.description.split(',')[0].strip()}"
     class_prompt = f"a photo of {character.description.split(',')[0].strip()}"
     
     print(f"Instance prompt: {instance_prompt}")
