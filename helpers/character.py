@@ -51,47 +51,46 @@ class Character:
         Replace character names in prompts with their unique identifiers
         
         Args:
-            lyric2prompt (list): List of prompt dictionaries
+            lyric2prompt (list): List of prompt dictionaries with 'start', 'end', 'prompt' keys
             characters (list): List of Character objects
             
         Returns:
-            dict: Dictionary with frame numbers as keys and prompt/character info as values
+            tuple: (animation_prompts dict, updated_lyric2prompt list)
         """
         animation_prompts = {}
+        updated_lyric2prompt = []
+        
+        fps_p = 15  # frames per second - should match the value from generate_video.py
+        
+        print(f"Processing {len(lyric2prompt)} entries from lyric2prompt...")
         
         for num, l2p in enumerate(lyric2prompt):
-            start = int(l2p['start'] * 15)  # Assuming 15 fps, could be parameterized
+            start_frame = int(l2p['start'] * fps_p)
             
             # Start with the original prompt
             prompt_text = l2p['prompt']
             
-            # Find which character(s) appear in this prompt and replace names with unique identifiers
-            active_characters = []
+            # Replace character names with unique identifiers
             if characters:
                 for character in characters:
                     # Use word boundary matching to avoid false positives
-                    pattern = r'\b' + re.escape(character.name.lower()) + r'\b'
-                    if re.search(pattern, prompt_text.lower()):
-                        active_characters.append(character)
-                        
-                        # Replace character name with their unique identifier
-                        pattern_replace = re.compile(re.escape(character.name), re.IGNORECASE)
-                        prompt_text = pattern_replace.sub(character.unique_identifier, prompt_text)
-                    
-                    # Also check for and clean up bracketed identifiers from Gemini
-                    bracketed_identifier = f"<{character.unique_identifier}>"
-                    if bracketed_identifier in prompt_text:
-                        prompt_text = prompt_text.replace(bracketed_identifier, character.unique_identifier)
-                        if character not in active_characters:
-                            active_characters.append(character)
+                    pattern = r'\b' + re.escape(character.name) + r'\b'
+                    if re.search(pattern, prompt_text, re.IGNORECASE):
+                        # Replace the character name with unique identifier
+                        prompt_text = re.sub(pattern, character.unique_identifier, prompt_text, flags=re.IGNORECASE)
+                        print(f"    Replaced '{character.name}' with '{character.unique_identifier}' in prompt")
         
-        # Store both modified prompt and character info
-        animation_prompts[start] = {
-            'prompt': prompt_text,
-            'characters': active_characters
-        }
-    
-        return animation_prompts
+            # Create the animation prompt entry with just the modified prompt text
+            animation_prompts[start_frame] = prompt_text
+            
+            # Update the lyric2prompt entry
+            updated_l2p = l2p.copy()
+            updated_l2p['prompt'] = prompt_text
+            updated_lyric2prompt.append(updated_l2p)
+            
+        
+        print(f"Created {len(animation_prompts)} animation prompt entries")
+        return animation_prompts, updated_lyric2prompt
 
     def to_dict(self):
         """Return a dictionary representation of the Character object."""
@@ -224,20 +223,3 @@ def update_character_occurrences(characters, lyric2prompt):
         print(f"Character '{character.name}' appears in {len(character.line_occurrences)} lines: {character.line_occurrences}")
     
     return characters
-
-#    # generate characters using the ViPE interpretation and adjust the interpretation
-#    def get_characters(lyric2prompt):
-#    """Generate characters using the ViPE interpretation and adjust the interpretation"""
-#    
-#    #ask an AI to generate characters
-#
-#    #generate character objects for it
-#        #name
-#        #description
-#        #occurences
-#        #ask for training images or get them using get_training_images
-#        #ask for regularization images, generate them or use public sets
-#    
-#    #adjust ViPE interpretations
-#
-#    return list_of_characters
