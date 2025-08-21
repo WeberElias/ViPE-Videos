@@ -144,8 +144,6 @@ def main():
     my_args.timestring = 'None'
 
     lyric2prompt = get_lyrtic2prompts(my_args)
-    print("AFTER -------------------------------------")
-    print(lyric2prompt)
     torch.cuda.empty_cache()
 
     # Initialize empty characters list and animation_prompts
