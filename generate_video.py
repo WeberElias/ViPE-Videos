@@ -22,9 +22,9 @@ from helpers.render import render_animation, render_input_video, render_image_ba
 from helpers.model_load import load_model, get_model_output_paths
 from helpers.aesthetics import load_aesthetics_model
 from helpers.gemini_api import setup_gemini, generate_characters
-from helpers.train_dreambooth_script import train_character
-from helpers.lora_manager import LoRAManager, is_valid_lora_directory
+from helpers.train_dreambooth_script import train_character, is_valid_lora_directory
 from helpers.character import Character, load_characters_from_json, update_character_occurrences
+from helpers.animatediff import generate_animatediff_video
 
 
 
@@ -84,6 +84,11 @@ def parse_args():
         help='set to 2D for 2D animation'
     )
     parser.add_argument("--disco_mode", action="store_true", help="pass the flag to switch to disco mode")
+    
+    parser.add_argument(
+        "--skip", type=str, choices=["dreambooth", "new"], default=None,
+        help='Skip certain features: "dreambooth" to skip character generation and DreamBooth training, "new" to use old video generation method'
+    )
 
     user_args = parser.parse_args()
     return user_args
@@ -94,13 +99,22 @@ def main():
     # print('job is running')
     user_args = parse_args()
 
+    # Configuration flags based on command line arguments
+    skip_dreambooth = (user_args.skip == "dreambooth" or user_args.skip == "new")
+    skip_new = (user_args.skip == "new")
+    
+    # Print configuration
+    if skip_dreambooth:
+        print("Skipping character generation and DreamBooth")
+    if skip_new:
+        print("Using old video generation method and skipping character generation and Dreambooth")
+
     my_args = dotdict({})
     my_args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     mp3_dir = './mp3/'
     mp3_name = user_args.mp3_file
     my_args.saving_dir = user_args.saving_dir
-    # '/graphics/scratch2/staff/hassan/test/'
     my_args.music_gap_prompt = user_args.music_gap_prompt
     my_args.prefix = user_args.prefix
     my_args.mp3_file = mp3_dir + '{}.mp3'.format(mp3_name)
@@ -130,239 +144,250 @@ def main():
     my_args.timestring = 'None'
 
     lyric2prompt = get_lyrtic2prompts(my_args)
+    print("AFTER -------------------------------------")
+    print(lyric2prompt)
     torch.cuda.empty_cache()
 
-    # Generate characters and update prompts using Gemini
-    success = False
-    characters_path = None
-    
-    # Check if character files already exist
-    base_name = os.path.splitext(os.path.basename(my_args.prompt_file))[0]
-    expected_updated_prompts_path = os.path.join(mp3_dir, f"{base_name}_with_characters.json")
-    expected_characters_path = os.path.join(mp3_dir, f"{base_name}_characters.json")
-    
-    if os.path.exists(expected_updated_prompts_path) and os.path.exists(expected_characters_path):
-        print("Found existing character files, skipping character generation:")
-        print(f"  Using existing updated prompts: {expected_updated_prompts_path}")
-        print(f"  Using existing characters: {expected_characters_path}")
-        
-        try:
-            # Load the existing updated prompts
-            with open(expected_updated_prompts_path, 'r') as f:
-                lyric2prompt = json.load(f)
-            
-            success = True
-            updated_prompts_path = expected_updated_prompts_path
-            characters_path = expected_characters_path
-            print("Successfully loaded existing character data")
-            
-        except Exception as e:
-            print(f"Error loading existing character files: {e}")
-            print("Falling back to character generation...")
-            success = False
-    
-    if not success:
-        try:
-            print("Generating new characters using Gemini...")
-            gemini_model = setup_gemini()
-            success, updated_prompts_path, characters_path = generate_characters(
-                gemini_model, 
-                my_args.prompt_file, 
-                mp3_dir
-            )
-            
-            if success:
-                print(f"Character generation completed:")
-                print(f"  Updated prompts saved to: {updated_prompts_path}")
-                print(f"  Characters saved to: {characters_path}")
-                
-                # Load the updated prompts to use in the video generation
-                with open(updated_prompts_path, 'r') as f:
-                    lyric2prompt = json.load(f)
-                print("Using updated prompts with characters for video generation")
-            else:
-                print("Character generation failed, using original prompts")
-                
-        except Exception as e:
-            print(f"Gemini character generation error: {e}")
-            print("Continuing with original prompts")
-
-    # Turn characters json file into list of Character objects
+    # Initialize empty characters list and animation_prompts
     characters = []
-    if success and characters_path:
-        characters = load_characters_from_json(characters_path)
-        # Update character occurrences based on prompts
-        characters = update_character_occurrences(characters, lyric2prompt)
-        print(f"Loaded and updated {len(characters)} character objects")
+    animation_prompts = {}
+
+    # Character generation and DreamBooth training (skip if flags are set)
+    if skip_dreambooth:
+        # Convert lyric2prompt to animation_prompts format without character processing
+        # Use the ViPE-generated prompts, not the original text
+        for i, entry in enumerate(lyric2prompt):
+            frame_num = int(entry['start'] * fps_p)
+            animation_prompts[frame_num] = entry['prompt']
     else:
-        print("No characters file available, continuing without characters")
-
-    # Train character models using Dreambooth
-    if characters:
-        # First, ensure the base model is available for training
-        # We need to initialize the model loading components early to download the model
-        print("Ensuring base model is available for training...")
+        # Generate characters and update prompts using Gemini
+        success = False
+        characters_path = None
         
-        def Root():
-            saving_dir = my_args.saving_dir
-            models_path = saving_dir + "models"
-            configs_path = saving_dir + "configs"
-            output_path = saving_dir + "temp"  # temporary output path
-            map_location = my_args.device
-            model_config = "v1-inference.yaml"
-            model_checkpoint = "v1-5-pruned-emaonly.ckpt"
-            custom_config_path = ""
-            custom_checkpoint_path = ""
-            return locals()
-
-        temp_root = SimpleNamespace(**Root())
-        temp_root.models_path, temp_root.output_path = get_model_output_paths(temp_root)
+        # Check if character files already exist
+        base_name = os.path.splitext(os.path.basename(my_args.prompt_file))[0]
+        expected_updated_prompts_path = os.path.join(mp3_dir, f"{base_name}_with_characters.json")
+        expected_characters_path = os.path.join(mp3_dir, f"{base_name}_characters.json")
         
-        # This will download the model if it doesn't exist
-        try:
-            temp_root.model, temp_root.device = load_model(temp_root, load_on_run_all=False, check_sha256=False, map_location=temp_root.map_location)
-            print(f"Base model ready at: {os.path.join(temp_root.models_path, temp_root.model_checkpoint)}")
-            # Clean up the temporary model to free memory
-            del temp_root.model
-            torch.cuda.empty_cache()
-        except Exception as e:
-            print(f"Could not load .ckpt model: {e}")
-            print("Training will proceed with HuggingFace model instead")
-        
-        # Now check if trained models already exist
-        characters_with_models = []
-        characters_needing_training = []
-        
-        print(f"Checking for existing trained models in: {os.path.join(my_args.saving_dir, 'models')}")
-        
-        for character in characters:
-            folder_name = character.name.lower().replace(' ', '_').replace(',', '')
-            expected_model_path = os.path.join(my_args.saving_dir, "models", folder_name)
+        if os.path.exists(expected_updated_prompts_path) and os.path.exists(expected_characters_path):
+            print("Found existing character files, skipping character generation:")
+            print(f"  Using existing updated prompts: {expected_updated_prompts_path}")
+            print(f"  Using existing characters: {expected_characters_path}")
             
             try:
-                if os.path.exists(expected_model_path) and os.path.isdir(expected_model_path):
-                    # Check if the directory contains a valid DreamBooth LoRA structure
-                    is_valid, validation_message = is_valid_lora_directory(expected_model_path)
-                    
-                    if is_valid:
-                        print(f"Found existing trained model for '{character.name}':")
-                        print(f"  Path: {expected_model_path}")
-                        character.model_path = expected_model_path
-                        characters_with_models.append(character)
-                    else:
-                        print(f"Invalid LoRA model structure for '{character.name}':")
-                        print(f"  Path: {expected_model_path}")
-                        print(f"  Issue: {validation_message}")
-                        characters_needing_training.append(character)
-                else:
-                    print(f"No trained model directory found for '{character.name}'")
-                    print(f"  Expected path: {expected_model_path}")
-                    characters_needing_training.append(character)
-                    
-            except PermissionError:
-                print(f"Permission denied accessing model directory for '{character.name}': {expected_model_path}")
-                characters_needing_training.append(character)
-            except OSError as e:
-                print(f"Error accessing model directory for '{character.name}': {e}")
-                characters_needing_training.append(character)
-        
-        if characters_with_models:
-            print(f"\nFound existing trained models for {len(characters_with_models)} characters:")
-            for char in characters_with_models:
-                print(f"  {char.name}: {char.model_path}")
-        
-        # Only proceed with training if there are characters that need training
-        if characters_needing_training:
-            print(f"Need to train {len(characters_needing_training)} characters")
-            
-            # Allow user to modify character descriptions before training
-            print("\n=== Character Description Review ===")
-            for i, character in enumerate(characters_needing_training):
-                print(f"\nCharacter {i+1}: {character.name}")
-                print(f"Current description: {character.description}")
-                print(f"Unique identifier: {character.unique_identifier}")
+                # Load the existing updated prompts
+                with open(expected_updated_prompts_path, 'r') as f:
+                    lyric2prompt = json.load(f)
                 
+                success = True
+                updated_prompts_path = expected_updated_prompts_path
+                characters_path = expected_characters_path
+                print("Successfully loaded existing character data")
+                
+            except Exception as e:
+                print(f"Error loading existing character files: {e}")
+                print("Falling back to character generation...")
+                success = False
+        
+        if not success:
+            try:
+                print("Generating new characters using Gemini...")
+                gemini_model = setup_gemini()
+                success, updated_prompts_path, characters_path = generate_characters(
+                    gemini_model, 
+                    my_args.prompt_file, 
+                    mp3_dir
+                )
+                
+                if success:
+                    print(f"Character generation completed:")
+                    print(f"  Updated prompts saved to: {updated_prompts_path}")
+                    print(f"  Characters saved to: {characters_path}")
+                    
+                    # Load the updated prompts to use in the video generation
+                    with open(updated_prompts_path, 'r') as f:
+                        lyric2prompt = json.load(f)
+                    print("Using updated prompts with characters for video generation")
+                else:
+                    print("Character generation failed, using original prompts")
+                    
+            except Exception as e:
+                print(f"Gemini character generation error: {e}")
+                print("Continuing with original prompts")
+
+        # Turn characters json file into list of Character objects
+        if success and characters_path:
+            characters = load_characters_from_json(characters_path)
+            # Update character occurrences based on prompts
+            characters = update_character_occurrences(characters, lyric2prompt)
+            print(f"Loaded and updated {len(characters)} character objects")
+        else:
+            print("No characters file available, continuing without characters")
+
+        # Train character models using Dreambooth
+        if characters:
+            # First, ensure the base model is available for training
+            # We need to initialize the model loading components early to download the model
+            print("Ensuring base model is available for training...")
+            
+            def Root():
+                saving_dir = my_args.saving_dir
+
+                models_path = saving_dir + "models"  # @param {type:"string"}
+                configs_path = saving_dir + "configs"  # @param {type:"string"}
+                output_path = saving_dir + "temp"  # @param {type:"string"}
+                map_location = my_args.device
+                model_checkpoint = "SG161222/Realistic_Vision_V5.1_noVAE"  # Use HuggingFace model ID instead of .ckpt
+                custom_config_path = ""
+                custom_checkpoint_path = ""
+                return locals()
+
+            temp_root = SimpleNamespace(**Root())
+            temp_root.models_path, temp_root.output_path = get_model_output_paths(temp_root)
+            
+            # Now check if trained models already exist
+            characters_with_models = []
+            characters_needing_training = []
+            
+            print(f"Checking for existing trained models in: {os.path.join(my_args.saving_dir, 'models')}")
+            
+            for character in characters:
+                folder_name = character.name.lower().replace(' ', '_').replace(',', '')
+                expected_model_path = os.path.join(my_args.saving_dir, "models", folder_name)
+                
+                try:
+                    if os.path.exists(expected_model_path) and os.path.isdir(expected_model_path):
+                        # Check if the directory contains a valid DreamBooth LoRA structure
+                        is_valid, validation_message = is_valid_lora_directory(expected_model_path)
+                        
+                        if is_valid:
+                            print(f"Found existing trained model for '{character.name}':")
+                            print(f"  Path: {expected_model_path}")
+                            character.model_path = expected_model_path
+                            characters_with_models.append(character)
+                        else:
+                            print(f"Invalid LoRA model structure for '{character.name}':")
+                            print(f"  Path: {expected_model_path}")
+                            print(f"  Issue: {validation_message}")
+                            characters_needing_training.append(character)
+                    else:
+                        print(f"No trained model directory found for '{character.name}'")
+                        print(f"  Expected path: {expected_model_path}")
+                        characters_needing_training.append(character)
+                        
+                except PermissionError:
+                    print(f"Permission denied accessing model directory for '{character.name}': {expected_model_path}")
+                    characters_needing_training.append(character)
+                except OSError as e:
+                    print(f"Error accessing model directory for '{character.name}': {e}")
+                    characters_needing_training.append(character)
+            
+            if characters_with_models:
+                print(f"\nFound existing trained models for {len(characters_with_models)} characters:")
+                for char in characters_with_models:
+                    print(f"  {char.name}: {char.model_path}")
+            
+            # Only proceed with training if there are characters that need training
+            if characters_needing_training:
+                print(f"Need to train {len(characters_needing_training)} characters")
+                
+                # Allow user to modify character descriptions before training
+                print("\n=== Character Description Review ===")
+                for i, character in enumerate(characters_needing_training):
+                    print(f"\nCharacter {i+1}: {character.name}")
+                    print(f"Current description: {character.description}")
+                    print(f"Unique identifier: {character.unique_identifier}")
+                    
+                    while True:
+                        user_input = input("Keep current description, edit or skip dreambooth? (y/edit/skip): ").lower().strip()
+                        
+                        if user_input in ['y', 'yes']:
+                            break
+                        elif user_input == 'edit':
+                            new_description = input(f"Enter new description for {character.name}: ").strip()
+                            if new_description:
+                                character.description = new_description
+                                print(f"Updated description: {character.description}")
+                                break
+                            else:
+                                print("Description cannot be empty. Please try again.")
+                        elif user_input == 'skip':
+                            print("Continuing without dreamboot...")
+                            characters_needing_training = []  # Skip training
+                            break   
+                        else:
+                            print("Please enter 'y', 'edit' or 'skip'")
+            
+            if characters_needing_training:
+                # Create training folders for characters that need training
+                training_folders_created = []
+                for character in characters_needing_training:
+                    folder_name = character.name.lower().replace(' ', '_').replace(',', '')
+                    training_folder = os.path.join(my_args.saving_dir, f"training_images_{mp3_name}", folder_name)
+                    os.makedirs(training_folder, exist_ok=True)
+                    character.training_images = training_folder
+                    training_folders_created.append((character.name, training_folder))
+                
+                print("\nTraining folders created. Add 3-10 images per character:")
+                for name, folder in training_folders_created:
+                    print(f"  {name}: {folder}")
+                
+                # Wait for user confirmation
                 while True:
-                    user_input = input("Keep current description? (y/edit): ").lower().strip()
+                    user_input = input("\nHave you added the training images? (y/skip): ").lower().strip()
                     
                     if user_input in ['y', 'yes']:
+                        characters_to_train = []
+                        for character in characters_needing_training:
+                            if os.path.exists(character.training_images):
+                                image_files = [f for f in os.listdir(character.training_images) 
+                                               if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+                                if len(image_files) >= 3:
+                                    characters_to_train.append(character)
+                                else:
+                                    print(f"Warning: {character.name} has only {len(image_files)} images (need at least 3)")
+                        
+                        if characters_to_train:
+                            print(f"=== Training {len(characters_to_train)} characters ===")
+                            print("This may take a while...\n")
+                            for i, character in enumerate(characters_to_train):
+                                print(f"Training {character.name} ({i+1}/{len(characters_to_train)})")
+                                success, model_path = train_character(character, saving_dir=my_args.saving_dir)
+                                if success:
+                                    character.model_path = model_path
                         break
-                    elif user_input == 'edit':
-                        new_description = input(f"Enter new description for {character.name}: ").strip()
-                        if new_description:
-                            character.description = new_description
-                            print(f"Updated description: {character.description}")
-                            break
-                        else:
-                            print("Description cannot be empty. Please try again.")
+                        
+                    elif user_input == 'skip':
+                        print("Continuing without dreambooth...")
+                        break
+                        
                     else:
-                        print("Please enter 'y' or 'edit'")
-            
-            print("\n=== Final Character Descriptions ===")
-            for character in characters_needing_training:
-                print(f"{character.name}: {character.description}")
-                print(f"  Unique ID: {character.unique_identifier}")
-            
-            # Confirm before proceeding
-            confirm = input("\nProceed with training? (y/n): ").lower().strip()
-            if confirm not in ['y', 'yes']:
-                print("Training cancelled.")
-                characters_needing_training = []  # Skip training
-        
-        if characters_needing_training:
-            # Create training folders for characters that need training
-            training_folders_created = []
-            for character in characters_needing_training:
-                folder_name = character.name.lower().replace(' ', '_').replace(',', '')
-                training_folder = os.path.join(my_args.saving_dir, f"training_images_{mp3_name}", folder_name)
-                os.makedirs(training_folder, exist_ok=True)
-                character.training_images = training_folder
-                training_folders_created.append((character.name, training_folder))
-            
-            print("\nTraining folders created. Add 3-10 images per character:")
-            for name, folder in training_folders_created:
-                print(f"  {name}: {folder}")
-            
-            # Wait for user confirmation
-            while True:
-                user_input = input("\nHave you added the training images? (y/skip): ").lower().strip()
-                
-                if user_input in ['y', 'yes']:
-                    characters_to_train = []
-                    for character in characters_needing_training:
-                        if os.path.exists(character.training_images):
-                            image_files = [f for f in os.listdir(character.training_images) 
-                                           if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
-                            if len(image_files) >= 3:
-                                characters_to_train.append(character)
-                            else:
-                                print(f"Warning: {character.name} has only {len(image_files)} images (need at least 3)")
-                    
-                    if characters_to_train:
-                        print(f"Training {len(characters_to_train)} characters...")
-                        for i, character in enumerate(characters_to_train):
-                            print(f"Training {character.name} ({i+1}/{len(characters_to_train)})")
-                            success, model_path = train_character(character, saving_dir=my_args.saving_dir)
-                            if success:
-                                character.model_path = model_path
-                    break
-                    
-                elif user_input == 'skip':
-                    break
-                    
-                else:
-                    print("Please enter 'y' or 'skip'")
-        else:
-            print("All characters already have trained models, skipping training process.")
+                        print("Please enter 'y' or 'skip'")
+            else:
+                print("All characters already have trained models, skipping training process.")
 
-    else:
-        print("No characters to train, continuing with base model...")
-    
-    animation_prompts = Character.replace_character_names_in_prompts(lyric2prompt, characters)
-    
+        else:
+            print("No characters to train, continuing with base model...")
+
+        # Debug: Check lyric2prompt before character processing
+        print("-----------------------------DEBUG LYRIC2PROMPT------------------------")
+        print(f"Number of entries in lyric2prompt: {len(lyric2prompt)}")
+        for i, entry in enumerate(lyric2prompt[:5]):  # Show first 5 entries
+            print(f"Entry {i}: {entry}")
+        if len(lyric2prompt) > 5:
+            print(f"... and {len(lyric2prompt) - 5} more entries")
+
+        animation_prompts, lyric2prompt = Character.replace_character_names_in_prompts(lyric2prompt, characters)
+
+        # Debug: Check animation_prompts after character processing
+        print("-----------------------------DEBUG ANIMATION_PROMPTS------------------------")
+        print(f"Number of entries in animation_prompts: {len(animation_prompts)}")
+        for key, value in animation_prompts.items():
+            print(f"Key {key}: {value}")
+
     # Add postfix to all prompts
-    for frame_num, prompt_data in animation_prompts.items():
-        prompt_data['prompt'] += my_args.postfix_prompts
+    for frame_num, prompt_text in animation_prompts.items():
+        animation_prompts[frame_num] = prompt_text + my_args.postfix_prompts
     
     name = 'test_{}_rews_{}_{}fps_{}ctx_{}_vipe_{}_abst_{}'.format(my_args.animation_mode, my_args.n_img_reward_samples,
                                                                    fps_p, my_args.context_size, mp3_name,
@@ -385,9 +410,11 @@ def main():
 
         # @markdown **Model Setup**
         map_location = my_args.device   # @param ["cpu", "cuda"]
-        # model_config = "v1-inference.yaml"  # @param ["custom","v2-inference.yaml","v2-inference-v.yaml","v1-inference.yaml"]
-        model_config = "v1-inference.yaml"  # @param ["custom","v2-inference.yaml","v2-inference-v.yaml","v1-inference.yaml"]
-        model_checkpoint = "v1-5-pruned-emaonly.ckpt"  # @param ["custom","v2-1_768-ema-pruned.ckpt","v2-1_512-ema-pruned.ckpt","768-v-ema.ckpt","512-base-ema.ckpt","Protogen_V2.2.ckpt","v1-5-pruned.ckpt","v1-5-pruned-emaonly.ckpt","sd-v1-4-full-ema.ckpt","sd-v1-4.ckpt","sd-v1-3-full-ema.ckpt","sd-v1-3.ckpt","sd-v1-2-full-ema.ckpt","sd-v1-2.ckpt","sd-v1-1-full-ema.ckpt","sd-v1-1.ckpt", "robo-diffusion-v1.ckpt","wd-v1-3-float16.ckpt"]
+        if skip_new:
+                model_config = "v1-inference.yaml"
+                model_checkpoint = "Protogen_V2.2.ckpt"  # @param ["custom","v2-1_768-ema-pruned.ckpt","v2-1_512-ema-pruned.ckpt","768-v-ema.ckpt","512-base-ema.ckpt","Protogen_V2.2.ckpt","v1-5-pruned.ckpt","v1-5-pruned-emaonly.ckpt","sd-v1-4-full-ema.ckpt","sd-v1-4.ckpt","sd-v1-3-full-ema.ckpt","sd-v1-3.ckpt","sd-v1-2-full-ema.ckpt","sd-v1-2.ckpt","sd-v1-1-full-ema.ckpt","sd-v1-1.ckpt", "robo-diffusion-v1.ckpt","wd-v1-3-float16.ckpt"]
+        else:
+            model_checkpoint = "SG161222/Realistic_Vision_V5.1_noVAE"  # Use HuggingFace model ID instead of .ckpt
         custom_config_path = ""  # @param {type:"string"}
         custom_checkpoint_path = ""  # @param {type:"string"}
         return locals()
@@ -399,26 +426,9 @@ def main():
     root.characters = characters if characters else []
 
     root.models_path, root.output_path = get_model_output_paths(root)
-    root.model, root.device = load_model(root, load_on_run_all=True, check_sha256=True, map_location=root.map_location)
     
-    # Initialize LoRA manager and preload character models
-    root.lora_manager = LoRAManager(root.model, root.device)
-    if characters:
-        root.lora_manager.load_character_loras(characters)
-        print(f"LoRA manager initialized with {len(characters)} character models")
-        
-        # Test LoRA loading capability
-        print("\n=== LoRA Loading Test ===")
-        for character in characters:
-            if character.name in root.lora_manager.lora_cache:
-                success = root.lora_manager.test_lora_loading(character.name)
-                if success:
-                    print(f"{character.name}: ✓ Ready for application")
-                else:
-                    print(f"{character.name}: ✗ LoRA loading failed")
-            else:
-                print(f"{character.name}: ✗ Not found in cache")
-        print("=========================\n")
+    # Set device early
+    root.device = torch.device(my_args.device)
 
     def DeforumAnimArgs():
         # @markdown ####**Animation:**
@@ -646,6 +656,25 @@ def main():
 
     args = SimpleNamespace(**args_dict)
     anim_args = SimpleNamespace(**anim_args_dict)
+    
+    # Decide rendering method based on flags
+    if skip_new:
+        print("Using old video generation method")
+        # Always load traditional model for old method
+        print("Loading traditional Stable Diffusion model...")
+        root.model, root.device = load_model(root, load_on_run_all=True, check_sha256=True, map_location=root.map_location)
+        use_animatediff = False
+    else:
+        # Now decide whether to load the traditional model
+        # Only load if we're not using AnimateDiff for 2D/3D animation
+        use_animatediff = (anim_args.animation_mode in ['2D', '3D'] and not pass_render)
+        
+        if use_animatediff:
+            print("Skipping traditional model loading - AnimateDiff will load its own models")
+            root.model = None  # AnimateDiff doesn't use this
+        else:
+            print("Loading traditional Stable Diffusion model...")
+            root.model, root.device = load_model(root, load_on_run_all=True, check_sha256=True, map_location=root.map_location)
 
     args.timestring = time.strftime('%Y%m%d%H%M%S')
     if pass_render:
@@ -680,9 +709,28 @@ def main():
 
     # dispatch to appropriate renderer
     if anim_args.animation_mode == '2D' or anim_args.animation_mode == '3D':
-        if not pass_render:
+        if not pass_render and not skip_new:
+            # Use AnimateDiff instead of traditional rendering
+            print("Using AnimateDiff for video generation...")
+            print("-----------------------------DEBUG------------------------\n")
+            print(animation_prompts)
+            
+            # Pass all characters to AnimateDiff instead of line-specific ones
+            video_output_dir = generate_animatediff_video(args, anim_args, animation_prompts, root, characters)
+            
+            if video_output_dir is None:
+                print("AnimateDiff generation failed, falling back to traditional rendering")
+                # Load the model now if we need to fall back
+                if root.model is None:
+                    print("Loading traditional model for fallback...")
+                    root.model, root.device = load_model(root, load_on_run_all=True, check_sha256=True, map_location=root.map_location)
+                render_animation(args, anim_args, animation_prompts, root)
+        else:
+            # Traditional rendering - make sure model is loaded
+            if root.model is None:
+                print("Loading traditional model for rendering...")
+                root.model, root.device = load_model(root, load_on_run_all=True, check_sha256=True, map_location=root.map_location)
             render_animation(args, anim_args, animation_prompts, root)
-        # render_animation(args, anim_args, animation_prompts, root)
     elif anim_args.animation_mode == 'Video Input':
         render_input_video(args, anim_args, animation_prompts, root)
     elif anim_args.animation_mode == 'Interpolation':
