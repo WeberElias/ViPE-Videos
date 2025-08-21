@@ -25,7 +25,6 @@ Constraints:
 - Character description must be very short and visual only.
 - Final character list must be in JSON format as shown.
 - DO NOT create more than one character
-- ALL prompts must feature this single character
 
 Here is the lyrics interpretation file:
 
