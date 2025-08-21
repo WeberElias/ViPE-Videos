@@ -5,6 +5,7 @@ import subprocess
 import sys
 import os
 from pathlib import Path
+from typing import Tuple
 
 def train_dreambooth(
     model_name,
@@ -131,7 +132,7 @@ def train_character(character, saving_dir):
     # Call the training function with all required parameters
     try:
         success, model_path = train_dreambooth(
-            model_name="runwayml/stable-diffusion-v1-5",
+            model_name="SG161222/Realistic_Vision_V5.1_noVAE", #runwayml/stable-diffusion-v1-5
             instance_dir=character.training_images,
             class_dir=class_dir,
             output_dir=output_dir,
@@ -158,3 +159,38 @@ def train_character(character, saving_dir):
     except Exception as e:
         print(f"Error training character {character.name}: {e}")
         return False, None
+
+def is_valid_lora_directory(model_path: str) -> Tuple[bool, str]:
+    """Check if a directory contains a valid DreamBooth LoRA model structure."""
+    try:
+        if not os.path.exists(model_path) or not os.path.isdir(model_path):
+            return False, "Directory does not exist"
+        
+        # Check for required subdirectories
+        unet_dir = os.path.join(model_path, "unet")
+        text_encoder_dir = os.path.join(model_path, "text_encoder")
+        
+        if not os.path.exists(unet_dir) or not os.path.isdir(unet_dir):
+            return False, "Missing 'unet' subdirectory"
+            
+        if not os.path.exists(text_encoder_dir) or not os.path.isdir(text_encoder_dir):
+            return False, "Missing 'text_encoder' subdirectory"
+        
+        # Check for required files in each subdirectory
+        required_files = ["adapter_config.json", "adapter_model.safetensors"]
+        
+        for subdir, subdir_name in [(unet_dir, "unet"), (text_encoder_dir, "text_encoder")]:
+            for required_file in required_files:
+                file_path = os.path.join(subdir, required_file)
+                if not os.path.exists(file_path):
+                    return False, f"Missing {required_file} in {subdir_name} directory"
+                
+                # Check if adapter_model.safetensors is not empty
+                if required_file == "adapter_model.safetensors":
+                    if os.path.getsize(file_path) == 0:
+                        return False, f"Empty {required_file} in {subdir_name} directory"
+        
+        return True, "Valid LoRA model structure"
+        
+    except (OSError, IOError, PermissionError) as e:
+        return False, f"Error accessing directory: {e}"
