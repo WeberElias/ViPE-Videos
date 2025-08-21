@@ -367,8 +367,6 @@ def main():
         else:
             print("No characters to train, continuing with base model...")
 
-        # Debug: Check lyric2prompt before character processing
-        print("-----------------------------DEBUG LYRIC2PROMPT------------------------")
         print(f"Number of entries in lyric2prompt: {len(lyric2prompt)}")
         for i, entry in enumerate(lyric2prompt[:5]):  # Show first 5 entries
             print(f"Entry {i}: {entry}")
@@ -377,8 +375,6 @@ def main():
 
         animation_prompts, lyric2prompt = Character.replace_character_names_in_prompts(lyric2prompt, characters)
 
-        # Debug: Check animation_prompts after character processing
-        print("-----------------------------DEBUG ANIMATION_PROMPTS------------------------")
         print(f"Number of entries in animation_prompts: {len(animation_prompts)}")
         for key, value in animation_prompts.items():
             print(f"Key {key}: {value}")
@@ -710,7 +706,6 @@ def main():
         if not pass_render and not skip_new:
             # Use AnimateDiff instead of traditional rendering
             print("Using AnimateDiff for video generation...")
-            print("-----------------------------DEBUG------------------------\n")
             print(animation_prompts)
             
             # Pass all characters to AnimateDiff instead of line-specific ones

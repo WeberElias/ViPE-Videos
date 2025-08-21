@@ -15,7 +15,7 @@ def generate_animatediff_video(args, anim_args, animation_prompts, root, charact
     Args:
         args: Generation arguments (from DeforumArgs)
         anim_args: Animation arguments (from DeforumAnimArgs) 
-        animation_prompts: Dictionary of {frame_num: prompt_data} - each entry is a line/prompt
+        animation_prompts: Dictionary of {frame_num: prompt_data}
         root: Root object containing model and device info
         characters: List of all Character objects
         
