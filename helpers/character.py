@@ -23,8 +23,13 @@ class Character:
         self.training_images = training_images
         self.model_path = None
         
-        # Generate unique identifier for DreamBooth training
-        self.unique_identifier = f"sks{self._sanitize_name_for_identifier(name)}"
+        # Generate unique identifier for DreamBooth training with description
+        sanitized_name = self._sanitize_name_for_identifier(name)
+        first_descriptor = description.split(',')[0].strip() if description else ""
+        self.unique_identifier = f"sks{sanitized_name} {first_descriptor}"
+        
+        # Keep the bracketed format for Gemini detection
+        self.bracketed_name = f"<{name}>"
     
     def _sanitize_name_for_identifier(self, name):
         """
@@ -48,47 +53,54 @@ class Character:
     @staticmethod
     def replace_character_names_in_prompts(lyric2prompt, characters):
         """
-        Replace character names in prompts with their unique identifiers
-        
+        Replace character names in prompts with their unique identifiers.
+        Transform from <CharacterName> format and plain names to unique identifier format.
+
         Args:
             lyric2prompt (list): List of prompt dictionaries with 'start', 'end', 'prompt' keys
             characters (list): List of Character objects
-            
+
         Returns:
             tuple: (animation_prompts dict, updated_lyric2prompt list)
         """
         animation_prompts = {}
         updated_lyric2prompt = []
-        
+
         fps_p = 15  # frames per second - should match the value from generate_video.py
-        
+
         print(f"Processing {len(lyric2prompt)} entries from lyric2prompt...")
-        
+
         for num, l2p in enumerate(lyric2prompt):
             start_frame = int(l2p['start'] * fps_p)
-            
+
             # Start with the original prompt
             prompt_text = l2p['prompt']
-            
+
             # Replace character names with unique identifiers
             if characters:
                 for character in characters:
-                    # Use word boundary matching to avoid false positives
-                    pattern = r'\b' + re.escape(character.name) + r'\b'
-                    if re.search(pattern, prompt_text, re.IGNORECASE):
-                        # Replace the character name with unique identifier
+                    # Replace bracketed format <CharacterName>
+                    bracketed_pattern = f"<{character.name}>"
+                    if bracketed_pattern in prompt_text:
+                        prompt_text = prompt_text.replace(bracketed_pattern, character.unique_identifier)
+                        print(f"    Replaced '{bracketed_pattern}' with '{character.unique_identifier}' in prompt")
+
+                    # Replace plain name with word boundaries (case-insensitive)
+                    # Avoid replacing if already replaced (to prevent double replacement)
+                    pattern = rf'\b{re.escape(character.name)}\b'
+                    # Only replace if the unique_identifier is not already present
+                    if re.search(pattern, prompt_text, flags=re.IGNORECASE) and character.unique_identifier not in prompt_text:
                         prompt_text = re.sub(pattern, character.unique_identifier, prompt_text, flags=re.IGNORECASE)
-                        print(f"    Replaced '{character.name}' with '{character.unique_identifier}' in prompt")
-        
+                        print(f"    Replaced plain name '{character.name}' with '{character.unique_identifier}' in prompt")
+
             # Create the animation prompt entry with just the modified prompt text
             animation_prompts[start_frame] = prompt_text
-            
+
             # Update the lyric2prompt entry
             updated_l2p = l2p.copy()
             updated_l2p['prompt'] = prompt_text
             updated_lyric2prompt.append(updated_l2p)
-            
-        
+
         print(f"Created {len(animation_prompts)} animation prompt entries")
         return animation_prompts, updated_lyric2prompt
 
@@ -213,10 +225,9 @@ def update_character_occurrences(characters, lyric2prompt):
         
         for character in characters:
             # Check for character name in angle brackets <CharacterName>
-            bracketed_name = f"<{character.name}>"
-            if bracketed_name in prompt:
+            if character.bracketed_name in prompt:
                 character.add_occurrence(line_index)
-                print(f"Found '{bracketed_name}' in line {line_index}: {prompt[:50]}...")
+                print(f"Found '{character.bracketed_name}' in line {line_index}: {prompt[:50]}...")
     
     # Print summary
     for character in characters:

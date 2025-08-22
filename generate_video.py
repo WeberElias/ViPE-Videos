@@ -219,8 +219,19 @@ def main():
             # Update character occurrences based on prompts
             characters = update_character_occurrences(characters, lyric2prompt)
             print(f"Loaded and updated {len(characters)} character objects")
+            
+            # Transform prompts from <CharacterName> format to unique identifier format
+            from helpers.character import Character
+            animation_prompts, lyric2prompt = Character.replace_character_names_in_prompts(lyric2prompt, characters)
+            print("Transformed character references in prompts to unique identifiers")
         else:
             print("No characters file available, continuing without characters")
+            # Convert lyric2prompt to animation_prompts format without character processing
+            animation_prompts = {}
+            fps_p = 15
+            for entry in lyric2prompt:
+                frame_num = int(entry['start'] * fps_p)
+                animation_prompts[frame_num] = entry['prompt']
 
         # Train character models using Dreambooth
         if characters:
@@ -294,6 +305,7 @@ def main():
                 for i, character in enumerate(characters_needing_training):
                     print(f"\nCharacter {i+1}: {character.name}")
                     print(f"Current description: {character.description}")
+                    print("Has to be like 'Name, Man/Woman, ...'")
                     print(f"Unique identifier: {character.unique_identifier}")
                     
                     while True:
