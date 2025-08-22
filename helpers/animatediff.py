@@ -282,8 +282,6 @@ def _generate_video_for_line(prompt, num_frames, characters, args, root, line_nu
         
         # Generate complete video for this line/prompt
         print("Generating video...")
-        
-        print("DEBUG ----------------------------"+ prompt)
         with torch.no_grad():
             result = pipe(
                 prompt=prompt,
