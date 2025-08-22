@@ -23,9 +23,9 @@ def generate_animatediff_video(args, anim_args, animation_prompts, root, charact
         str: Path to the generated video file
     """
     
-    # Configuration
-    MAX_FRAMES_PER_SEGMENT = 64
-    MIN_FRAMES_PER_SEGMENT = 8
+    # Configuration - use AnimateDiff-compatible frame counts
+    MAX_FRAMES_PER_SEGMENT = 64  # AnimateDiff max
+    MIN_FRAMES_PER_SEGMENT = 16  # AnimateDiff min (changed from 8)
     
     print("=== ANIMATEDIFF VIDEO GENERATION ===")
     print(f"Total lines/prompts to process: {len(animation_prompts)}")
@@ -195,15 +195,38 @@ def _generate_video_for_line(prompt, num_frames, characters, args, root, line_nu
     try:
         print(f"Loading AnimateDiff pipeline for: '{prompt[:50]}...'")
         
-        # Load AnimateDiff pipeline
+        # CONSISTENT FRAME COUNT APPROACH:
+        # Always use the same frame count to avoid LoRA conflicts
+        # We'll adjust the final video length by duplicating/trimming frames
+        CONSISTENT_FRAME_COUNT = 32  # Use 32 for all generations
+        
+        original_num_frames = num_frames
+        num_frames = CONSISTENT_FRAME_COUNT
+        
+        print(f"Using consistent frame count: {num_frames} (target: {original_num_frames})")
+        
+        # Change this back to variable frame counts
+        # AnimateDiff works best with specific frame counts
+        # Common working values: 16, 24, 32, 48, 64
+        valid_frame_counts = [16, 24, 32, 48, 64]
+
+        # Find the closest valid frame count
+        original_num_frames = num_frames
+        num_frames = min(valid_frame_counts, key=lambda x: abs(x - num_frames))
+
+        if original_num_frames != num_frames:
+            print(f"Adjusted frame count from {original_num_frames} to {num_frames} for AnimateDiff compatibility")
+        
+        # Force GPU memory cleanup before loading new pipeline
+        torch.cuda.empty_cache()
+        
+        # Load fresh AnimateDiff pipeline for each line to avoid LoRA conflicts
         adapter = MotionAdapter.from_pretrained(
             "guoyww/animatediff-motion-adapter-v1-5-2", 
             torch_dtype=torch.float16
         )
         
-        model_id = "SG161222/Realistic_Vision_V5.1_noVAE"  # original with AnimateDiff
-        # or try:
-        #model_id = "runwayml/stable-diffusion-v1-5"
+        model_id = "SG161222/Realistic_Vision_V5.1_noVAE"
         
         pipe = AnimateDiffPipeline.from_pretrained(
             model_id, 
@@ -246,8 +269,12 @@ def _generate_video_for_line(prompt, num_frames, characters, args, root, line_nu
         steps = getattr(args, 'steps', 25)
         guidance_scale = getattr(args, 'scale', 7.5)
         
+        # Ensure dimensions are divisible by 8 (required by diffusion models)
+        height = height - (height % 8)
+        width = width - (width % 8)
+        
         print(f"Generation parameters:")
-        print(f"  Frames: {num_frames}")
+        print(f"  Frames: {num_frames} (target: {original_num_frames})")
         print(f"  Size: {width}x{height}")
         print(f"  Steps: {steps}")
         print(f"  Guidance: {guidance_scale}")
@@ -255,6 +282,8 @@ def _generate_video_for_line(prompt, num_frames, characters, args, root, line_nu
         
         # Generate complete video for this line/prompt
         print("Generating video...")
+        
+        print("DEBUG ----------------------------"+ prompt)
         with torch.no_grad():
             result = pipe(
                 prompt=prompt,
@@ -270,9 +299,21 @@ def _generate_video_for_line(prompt, num_frames, characters, args, root, line_nu
         frames = result.frames[0]
         print(f"Generated {len(frames)} frames successfully")
         
-        # Clean up pipeline to free memory for next line
+        # Adjust frame count to match target duration
+        if len(frames) != original_num_frames:
+            if len(frames) < original_num_frames:
+                print(f"Extending video from {len(frames)} to {original_num_frames} frames")
+                last_frame = frames[-1]
+                while len(frames) < original_num_frames:
+                    frames.append(last_frame.copy())
+            else:
+                print(f"Trimming video from {len(frames)} to {original_num_frames} frames")
+                frames = frames[:original_num_frames]
+        
+        # Clean up pipeline completely to free memory for next line
         del pipe
         del adapter
+        del scheduler
         torch.cuda.empty_cache()
         
         return frames
@@ -281,6 +322,15 @@ def _generate_video_for_line(prompt, num_frames, characters, args, root, line_nu
         print(f"Error generating video for line: {e}")
         import traceback
         traceback.print_exc()
+        
+        # Cleanup on error
+        try:
+            del pipe
+            del adapter
+            torch.cuda.empty_cache()
+        except:
+            pass
+        
         return None
 
 
@@ -346,21 +396,33 @@ def _apply_character_loras(pipe, characters):
         
         print(f"Applying LoRA for characters: {[char.name for char in characters_with_models]}")
         
-        for character in characters_with_models:
-            model_path = character.model_path
+        # Only apply the first character's LoRA to avoid conflicts
+        character = characters_with_models[0]
+        base_model_path = character.model_path
+        unet_path = os.path.join(base_model_path, "unet")
+        text_encoder_path = os.path.join(base_model_path, "text_encoder")
+        
+        try:
+            print(f"  Applying UNet LoRA for {character.name} from {unet_path}")
+            if os.path.exists(unet_path):
+                pipe.unet = PeftModel.from_pretrained(pipe.unet, unet_path)
+            else:
+                print(f"    Warning: UNet LoRA path does not exist: {unet_path}")
+                return
             
-            # Apply LoRA directly from the character's model path
-            try:
-                print(f"  Applying LoRA for {character.name} from {model_path}")
-                pipe.unet = PeftModel.from_pretrained(pipe.unet, model_path)
-                # Note: Only applying to UNet for now. If you need text encoder LoRA too,
-                # you'll need to modify the Character class to store separate paths
-                break  # Only apply first character's LoRA for now
-                
-            except Exception as e:
-                print(f"  Error applying LoRA for {character.name}: {e}")
-                continue
-                
+            print(f"  Applying Text Encoder LoRA for {character.name} from {text_encoder_path}")
+            if os.path.exists(text_encoder_path):
+                pipe.text_encoder = PeftModel.from_pretrained(pipe.text_encoder, text_encoder_path)
+            else:
+                print(f"    Warning: Text Encoder LoRA path does not exist: {text_encoder_path}")
+                return
+            
+            print(f"  Successfully applied LoRA for {character.name}")
+            
+        except Exception as e:
+            print(f"  Error applying LoRA for {character.name}: {e}")
+            # Don't raise the exception, just continue without LoRA
+            
     except Exception as e:
         print(f"Error applying character LoRAs: {e}")
 
