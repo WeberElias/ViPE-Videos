@@ -22,7 +22,8 @@ def train_dreambooth(
     lora_alpha,
     lora_text_encoder_r,
     lora_text_encoder_alpha,
-    num_class_images
+    num_class_images,
+    prior_loss_weight=1.0
 ):
     """
     Train a Dreambooth model with LoRA
@@ -41,7 +42,7 @@ def train_dreambooth(
     # Path to your existing dreambooth training script
     script_path = "dreambooth/examples/lora_dreambooth/train_dreambooth.py"
     
-    # Build command using your existing script with optimized parameters
+    # Build command using your existing script with configurable prior_loss_weight
     cmd = [
         "accelerate", "launch", script_path,
         f"--pretrained_model_name_or_path={model_name}",
@@ -50,7 +51,7 @@ def train_dreambooth(
         f"--output_dir={output_dir}",
         "--train_text_encoder",
         "--with_prior_preservation",
-        "--prior_loss_weight=1.0",
+        f"--prior_loss_weight={prior_loss_weight}",
         f"--instance_prompt={instance_prompt}",
         f"--class_prompt={class_prompt}",
         f"--resolution={resolution}",
@@ -75,6 +76,7 @@ def train_dreambooth(
     print(f"Training steps: {max_train_steps}")
     print(f"Learning rate: {learning_rate}")
     print(f"LoRA rank: {lora_r}")
+    print(f"Prior loss weight: {prior_loss_weight}")
     
     try:
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
@@ -98,8 +100,8 @@ def train_character(character, saving_dir):
     print(f"Training character: {character.name}")
     
     # Fixed training parameters - change here to modify training settings
-    num_class_images = 1000
-    max_train_steps = 400
+    num_class_images = 200
+    max_train_steps = 800
     learning_rate = 0.0002
     
     # Prepare character-specific paths and prompts
@@ -107,8 +109,9 @@ def train_character(character, saving_dir):
     output_dir = os.path.join(saving_dir, "models", folder_name)
     class_dir = os.path.join(saving_dir, "class_images")
     
-    # Use the character's unique identifier for consistent training
-    instance_prompt = f"a photo of {character.unique_identifier} {character.description.split(',')[0].strip()}"
+    # Use the character's unique identifier for instance prompt
+    # Use just the descriptor for class prompt to avoid duplication
+    instance_prompt = f"a photo of {character.unique_identifier}"
     class_prompt = f"a photo of {character.description.split(',')[0].strip()}"
     
     print(f"Instance prompt: {instance_prompt}")
