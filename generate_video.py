@@ -221,7 +221,6 @@ def main():
             print(f"Loaded and updated {len(characters)} character objects")
             
             # Transform prompts from <CharacterName> format to unique identifier format
-            from helpers.character import Character
             animation_prompts, lyric2prompt = Character.replace_character_names_in_prompts(lyric2prompt, characters)
             print("Transformed character references in prompts to unique identifiers")
         else:
@@ -305,7 +304,7 @@ def main():
                 for i, character in enumerate(characters_needing_training):
                     print(f"\nCharacter {i+1}: {character.name}")
                     print(f"Current description: {character.description}")
-                    print("Has to be like 'Name, Man/Woman, ...'")
+                    print("Has to start with 'Man/Woman, ...'")
                     print(f"Unique identifier: {character.unique_identifier}")
                     
                     while True:
