@@ -68,8 +68,6 @@ class Character:
 
         fps_p = 15  # frames per second - should match the value from generate_video.py
 
-        print(f"Processing {len(lyric2prompt)} entries from lyric2prompt...")
-
         for num, l2p in enumerate(lyric2prompt):
             start_frame = int(l2p['start'] * fps_p)
 
@@ -83,7 +81,6 @@ class Character:
                     bracketed_pattern = f"<{character.name}>"
                     if bracketed_pattern in prompt_text:
                         prompt_text = prompt_text.replace(bracketed_pattern, character.unique_identifier)
-                        print(f"    Replaced '{bracketed_pattern}' with '{character.unique_identifier}' in prompt")
 
                     # Replace plain name with word boundaries (case-insensitive)
                     # Avoid replacing if already replaced (to prevent double replacement)
@@ -91,7 +88,6 @@ class Character:
                     # Only replace if the unique_identifier is not already present
                     if re.search(pattern, prompt_text, flags=re.IGNORECASE) and character.unique_identifier not in prompt_text:
                         prompt_text = re.sub(pattern, character.unique_identifier, prompt_text, flags=re.IGNORECASE)
-                        print(f"    Replaced plain name '{character.name}' with '{character.unique_identifier}' in prompt")
 
             # Create the animation prompt entry with just the modified prompt text
             animation_prompts[start_frame] = prompt_text
@@ -101,7 +97,6 @@ class Character:
             updated_l2p['prompt'] = prompt_text
             updated_lyric2prompt.append(updated_l2p)
 
-        print(f"Created {len(animation_prompts)} animation prompt entries")
         return animation_prompts, updated_lyric2prompt
 
     def to_dict(self):
@@ -173,7 +168,6 @@ def load_characters_from_json(json_file_path):
             
             characters.append(character)
         
-        print(f"Loaded {len(characters)} characters from {json_file_path}")
         return characters
         
     except FileNotFoundError:
@@ -203,8 +197,6 @@ def save_characters_to_json(characters, json_file_path):
         with open(json_file_path, 'w') as f:
             json.dump(characters_data, f, indent=2)
         
-        print(f"Saved {len(characters)} characters to {json_file_path}")
-        
     except Exception as e:
         print(f"Error saving characters: {e}")
 
@@ -224,13 +216,8 @@ def update_character_occurrences(characters, lyric2prompt):
         prompt = line_data.get('prompt', '')
         
         for character in characters:
-            # Check for character name in angle brackets <CharacterName>
-            if character.bracketed_name in prompt:
+            # Check for character name in angle brackets <CharacterName> or unique_identifier
+            if character.bracketed_name in prompt or character.unique_identifier in prompt:
                 character.add_occurrence(line_index)
-                print(f"Found '{character.bracketed_name}' in line {line_index}: {prompt[:50]}...")
-    
-    # Print summary
-    for character in characters:
-        print(f"Character '{character.name}' appears in {len(character.line_occurrences)} lines: {character.line_occurrences}")
     
     return characters
