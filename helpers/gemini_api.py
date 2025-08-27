@@ -53,7 +53,7 @@ def load_prompt_template(prompt_file_path=None):
         print(f"Error reading prompt file: {e}")
         return None
 
-def generate_characters(model, json_file_path, output_dir="./", prompt_file_path=None):
+def generate_characters(model, json_file_path, output_dir="./", prompt_file_path=None, logger=None):
     """
     Generate characters from lyrics interpretation file using Gemini
     
@@ -62,6 +62,7 @@ def generate_characters(model, json_file_path, output_dir="./", prompt_file_path
         json_file_path: Path to lyrics interpretation JSON (lyric2prompt)
         output_dir: Directory to save output files
         prompt_file_path: Path to custom prompt file (optional)
+        logger: VideoGenerationLogger instance (optional)
         
     Returns:
         tuple: (success: bool, updated_prompts_path: str, characters_path: str)
@@ -88,6 +89,9 @@ def generate_characters(model, json_file_path, output_dir="./", prompt_file_path
         # Call Gemini
         gemini_response = call_gemini(model, prompt)
         
+        if logger:
+            logger.log_gemini_prompt_and_response(prompt, gemini_response, success=(gemini_response is not None))
+        
         if gemini_response is None:
             print("Error: Failed to get response from Gemini")
             return False, None, None
@@ -96,6 +100,8 @@ def generate_characters(model, json_file_path, output_dir="./", prompt_file_path
         return validate_and_save_gemini_response(gemini_response, json_file_path, output_dir)
         
     except Exception as e:
+        if logger:
+            logger.log_gemini_prompt_and_response(prompt if 'prompt' in locals() else "Failed to generate prompt", None, success=False, error=e)
         print(f"ERROR in generate_characters: {e}")
         print(f"Exception type: {type(e).__name__}")
         import traceback

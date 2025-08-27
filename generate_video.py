@@ -25,6 +25,7 @@ from helpers.gemini_api import setup_gemini, generate_characters
 from helpers.train_dreambooth_script import train_character, is_valid_lora_directory
 from helpers.character import Character, load_characters_from_json, update_character_occurrences
 from helpers.animatediff import generate_animatediff_video
+from helpers.logs import VideoGenerationLogger
 
 
 
@@ -96,9 +97,8 @@ def parse_args():
 
 def main():
     t0 = time.time()
-    # print('job is running')
     user_args = parse_args()
-
+    
     # Configuration flags based on command line arguments
     skip_dreambooth = (user_args.skip == "dreambooth" or user_args.skip == "new")
     skip_new = (user_args.skip == "new")
@@ -126,7 +126,10 @@ def main():
     my_args.use_vipe = False if user_args.skip_vipe else True
     my_args.n_img_reward_samples = user_args.image_quality_number
     my_args.caption_mode = user_args.caption_mode  # set to None to skip adding lyrics, set to 'lyrics' to only add lyrics and 'both' to add both lyrics and prompts
-    my_args.postfix_prompts = ", extreme detail, high quality, HD, 32K, dramatic lighting, ultra-realistic, high detailed photography, vivid, vibrant, intricate, trending on artstation"
+    if skip_new:
+        my_args.postfix_prompts = ", high quality, realistic, wide, masterpiece, best quality"
+    else:
+        my_args.postfix_prompts = ", extreme detail, high quality, HD, 32K, dramatic lighting, ultra-realistic, high detailed photography, vivid, vibrant, intricate, trending on artstation"
     my_args.prompt_file = '{}/{}_ctx_{}_sample_{}_vipe_{}_abst_{}_lyric2prompt'.format(mp3_dir, mp3_name,
                                                                                        my_args.context_size,
                                                                                        my_args.do_sample,
@@ -145,6 +148,16 @@ def main():
 
     lyric2prompt = get_lyrtic2prompts(my_args)
     torch.cuda.empty_cache()
+    
+    # Initialize logger
+    logger = VideoGenerationLogger(my_args.saving_dir, mp3_name)
+    
+    # Log program arguments
+    logger.log_program_arguments(user_args, my_args)
+
+    # Log transcription and ViPE interpretations
+    logger.log_transcription(my_args.transcription_file)
+    logger.log_vipe_interpretations(lyric2prompt, my_args.prompt_file)
 
     # Initialize empty characters list and animation_prompts
     characters = []
@@ -191,6 +204,8 @@ def main():
             try:
                 print("Generating new characters using Gemini...")
                 gemini_model = setup_gemini()
+                
+                # Log the Gemini call (you'll need to modify generate_characters to return prompt)
                 success, updated_prompts_path, characters_path = generate_characters(
                     gemini_model, 
                     my_args.prompt_file, 
@@ -210,6 +225,7 @@ def main():
                     print("Character generation failed, using original prompts")
                     
             except Exception as e:
+                logger.log_error("gemini_character_generation", e)
                 print(f"Gemini character generation error: {e}")
                 print("Continuing with original prompts")
 
@@ -220,9 +236,11 @@ def main():
             characters = update_character_occurrences(characters, lyric2prompt)
             print(f"Loaded and updated {len(characters)} character objects")
             
+            # Log character generation results
+            logger.log_character_generation(characters, updated_prompts_path, characters_path)
+            
             # Transform prompts from <CharacterName> format to unique identifier format
             animation_prompts, lyric2prompt = Character.replace_character_names_in_prompts(lyric2prompt, characters)
-            print("Transformed character references in prompts to unique identifiers")
         else:
             print("No characters file available, continuing without characters")
             # Convert lyric2prompt to animation_prompts format without character processing
@@ -233,11 +251,7 @@ def main():
                 animation_prompts[frame_num] = entry['prompt']
 
         # Train character models using Dreambooth
-        if characters:
-            # First, ensure the base model is available for training
-            # We need to initialize the model loading components early to download the model
-            print("Ensuring base model is available for training...")
-            
+        if characters:           
             def Root():
                 saving_dir = my_args.saving_dir
 
@@ -256,9 +270,7 @@ def main():
             # Now check if trained models already exist
             characters_with_models = []
             characters_needing_training = []
-            
-            print(f"Checking for existing trained models in: {os.path.join(my_args.saving_dir, 'models')}")
-            
+                        
             for character in characters:
                 folder_name = character.name.lower().replace(' ', '_').replace(',', '')
                 expected_model_path = os.path.join(my_args.saving_dir, "models", folder_name)
@@ -269,8 +281,6 @@ def main():
                         is_valid, validation_message = is_valid_lora_directory(expected_model_path)
                         
                         if is_valid:
-                            print(f"Found existing trained model for '{character.name}':")
-                            print(f"  Path: {expected_model_path}")
                             character.model_path = expected_model_path
                             characters_with_models.append(character)
                         else:
@@ -361,10 +371,28 @@ def main():
                             print("This may take a while...\n")
                             for i, character in enumerate(characters_to_train):
                                 print(f"Training {character.name} ({i+1}/{len(characters_to_train)})")
-                                success, model_path = train_character(character, saving_dir=my_args.saving_dir)
-                                if success:
-                                    character.model_path = model_path
-                        break
+                                try:
+                                    success, model_path, training_parameters = train_character(character, saving_dir=my_args.saving_dir)
+                                    
+                                    # Log DreamBooth training with actual parameters
+                                    logger.log_dreambooth_parameters(
+                                        character, 
+                                        parameters=training_parameters,
+                                        success=success, 
+                                        model_path=model_path
+                                    )
+                                    
+                                    if success:
+                                        character.model_path = model_path
+                                except Exception as e:
+                                    logger.log_error(f"dreambooth_training_{character.name}", e)
+                                    logger.log_dreambooth_parameters(
+                                        character,
+                                        parameters={},
+                                        success=False,
+                                        error=e
+                                    )
+                        #break  # This break should be removed - it exits after first character
                         
                     elif user_input == 'skip':
                         print("Continuing without dreambooth...")
@@ -378,17 +406,7 @@ def main():
         else:
             print("No characters to train, continuing with base model...")
 
-        print(f"Number of entries in lyric2prompt: {len(lyric2prompt)}")
-        for i, entry in enumerate(lyric2prompt[:5]):  # Show first 5 entries
-            print(f"Entry {i}: {entry}")
-        if len(lyric2prompt) > 5:
-            print(f"... and {len(lyric2prompt) - 5} more entries")
-
         animation_prompts, lyric2prompt = Character.replace_character_names_in_prompts(lyric2prompt, characters)
-
-        print(f"Number of entries in animation_prompts: {len(animation_prompts)}")
-        for key, value in animation_prompts.items():
-            print(f"Key {key}: {value}")
 
     # Add postfix to all prompts
     for frame_num, prompt_text in animation_prompts.items():
@@ -416,8 +434,8 @@ def main():
         # @markdown **Model Setup**
         map_location = my_args.device   # @param ["cpu", "cuda"]
         if skip_new:
-                model_config = "v1-inference.yaml"
-                model_checkpoint = "Protogen_V2.2.ckpt"  # @param ["custom","v2-1_768-ema-pruned.ckpt","v2-1_512-ema-pruned.ckpt","768-v-ema.ckpt","512-base-ema.ckpt","Protogen_V2.2.ckpt","v1-5-pruned.ckpt","v1-5-pruned-emaonly.ckpt","sd-v1-4-full-ema.ckpt","sd-v1-4.ckpt","sd-v1-3-full-ema.ckpt","sd-v1-3.ckpt","sd-v1-2-full-ema.ckpt","sd-v1-2.ckpt","sd-v1-1-full-ema.ckpt","sd-v1-1.ckpt", "robo-diffusion-v1.ckpt","wd-v1-3-float16.ckpt"]
+            model_config = "v1-inference.yaml"
+            model_checkpoint = "Protogen_V2.2.ckpt"  # @param ["custom","v2-1_768-ema-pruned.ckpt","v2-1_512-ema-pruned.ckpt","768-v-ema.ckpt","512-base-ema.ckpt","Protogen_V2.2.ckpt","v1-5-pruned.ckpt","v1-5-pruned-emaonly.ckpt","sd-v1-4-full-ema.ckpt","sd-v1-4.ckpt","sd-v1-3-full-ema.ckpt","sd-v1-3.ckpt","sd-v1-2-full-ema.ckpt","sd-v1-2.ckpt","sd-v1-1-full-ema.ckpt","sd-v1-1.ckpt", "robo-diffusion-v1.ckpt","wd-v1-3-float16.ckpt"]
         else:
             model_checkpoint = "SG161222/Realistic_Vision_V5.1_noVAE"  # Use HuggingFace model ID instead of .ckpt
         custom_config_path = ""  # @param {type:"string"}
@@ -434,7 +452,7 @@ def main():
     
     # Set device early
     root.device = torch.device(my_args.device)
-
+    
     def DeforumAnimArgs():
         # @markdown ####**Animation:**
 
@@ -551,7 +569,8 @@ def main():
         bit_depth_output = 8  # @param [8, 16, 32] {type:"raw"}
         n_img_reward_samples = my_args.n_img_reward_samples  # generate n images then select the best one based on imgreward method
         # @markdown **Sampling Settings**
-        seed = -1  # @param
+        #seed = -1  # @param
+        seed = 2169387807   #random but fixed seed for comparability
         sampler = 'euler_ancestral'  # @param ["klms","dpm2","dpm2_ancestral","heun","euler","euler_ancestral","plms", "ddim", "dpm_fast", "dpm_adaptive", "dpmpp_2s_a", "dpmpp_2m"]
         steps = 50  # @param
         scale = 7  # @param previosuly 7
@@ -662,6 +681,9 @@ def main():
     args = SimpleNamespace(**args_dict)
     anim_args = SimpleNamespace(**anim_args_dict)
     
+    # Log animation arguments
+    logger.log_animation_args(args, anim_args)
+    
     # Decide rendering method based on flags
     if skip_new:
         print("Using old video generation method")
@@ -675,10 +697,8 @@ def main():
         use_animatediff = (anim_args.animation_mode in ['2D', '3D'] and not pass_render)
         
         if use_animatediff:
-            print("Skipping traditional model loading - AnimateDiff will load its own models")
             root.model = None  # AnimateDiff doesn't use this
         else:
-            print("Loading traditional Stable Diffusion model...")
             root.model, root.device = load_model(root, load_on_run_all=True, check_sha256=True, map_location=root.map_location)
 
     args.timestring = time.strftime('%Y%m%d%H%M%S')
@@ -718,11 +738,23 @@ def main():
             # Use AnimateDiff instead of traditional rendering
             print("Using AnimateDiff for video generation...")
             print(animation_prompts)
+
+         # Check if character occurrences need to be updated and update them
+            if characters:
+                needs_update = any(len(char.line_occurrences) == 0 for char in characters)
+                if needs_update:
+                    print("Updating character line occurrences...")
+                    characters = update_character_occurrences(characters, lyric2prompt)
+                    
+                    # Debug: Print updated occurrences
+                    for char in characters:
+                        print(f"Character {char.name} appears in lines: {char.line_occurrences}")
             
             # Pass all characters to AnimateDiff instead of line-specific ones
             video_output_dir = generate_animatediff_video(args, anim_args, animation_prompts, root, characters)
             
             if video_output_dir is None:
+                logger.log_fallback("AnimateDiff", "traditional_rendering", "AnimateDiff generation failed")
                 print("AnimateDiff generation failed, falling back to traditional rendering")
                 # Load the model now if we need to fall back
                 if root.model is None:
@@ -812,6 +844,14 @@ def main():
                          os.path.join(root.output_path, f"{mp3_name}.mp4"))
     t1 = time.time()
     print('video generation took, ', (t1 - t0) / 60, ' mins')
+    
+    # Generate run summary
+    summary = logger.get_run_summary()
+    if summary:
+        print(f"\n=== Run Summary ===")
+        print(f"Run ID: {summary['run_id']}")
+        print(f"Logs saved to: {summary['logs_directory']}")
+        print(f"Files created: {len(summary['files_created'])}")
 
 
 if __name__ == "__main__":
