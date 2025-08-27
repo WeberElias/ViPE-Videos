@@ -174,6 +174,7 @@ def _extract_lines_from_animation_prompts(animation_prompts, max_frames):
 def _generate_video_for_line(prompt, num_frames, characters, args, root, line_number=None):
     """
     Generate a complete video for one line/prompt using AnimateDiff.
+    If more than 32 frames are needed, generate multiple video segments and concatenate them.
     
     Args:
         prompt: Text prompt for this line
@@ -190,108 +191,143 @@ def _generate_video_for_line(prompt, num_frames, characters, args, root, line_nu
     try:
         print(f"Loading AnimateDiff pipeline for: '{prompt[:50]}...'")
         
-        # AnimateDiff works best with specific frame counts
-        valid_frame_counts = [16, 32]
-
-        # Find the closest valid frame count to what was requested
-        original_num_frames = num_frames
-        num_frames = min(valid_frame_counts, key=lambda x: abs(x - num_frames))
-
-        if original_num_frames != num_frames:
-            print(f"Adjusted frame count from {original_num_frames} to {num_frames} for AnimateDiff compatibility")
+        # AnimateDiff works best with 16 or 32 frames
+        OPTIMAL_FRAMES = 32
+        MIN_FRAMES = 16
         
-        # Force GPU memory cleanup before loading new pipeline
-        torch.cuda.empty_cache()
+        all_frames = []
         
-        # Load fresh AnimateDiff pipeline for each line to avoid LoRA conflicts
-        adapter = MotionAdapter.from_pretrained(
-            "guoyww/animatediff-motion-adapter-v1-5-2", 
-            torch_dtype=torch.float16
-        )
-        
-        model_id = "SG161222/Realistic_Vision_V5.1_noVAE"
-        
-        pipe = AnimateDiffPipeline.from_pretrained(
-            model_id, 
-            motion_adapter=adapter, 
-            torch_dtype=torch.float16,
-        ).to(root.device)
-        
-        # Configure scheduler
-        scheduler = DDIMScheduler.from_pretrained(
-            model_id,
-            subfolder="scheduler",
-            clip_sample=False,
-            timestep_spacing="linspace",
-            beta_schedule="linear",
-            steps_offset=1,
-        )
-        pipe.scheduler = scheduler
-        
-        # Apply LoRA for characters that appear in this line
-        if characters and line_number is not None:
-            # Filter characters that appear in this specific line
-            line_characters = [char for char in characters if char.appears_in_line(line_number)]
-            if line_characters:
-                _apply_character_loras(pipe, line_characters)
-
-        # Enable memory optimizations
-        pipe.enable_vae_slicing()
-        pipe.enable_model_cpu_offload()
-        pipe.set_progress_bar_config(disable=True)
-        
-        # Generation parameters
-        seed = getattr(args, 'seed', 42)
-        generator = torch.Generator(device=root.device).manual_seed(seed)
-        
-        negative_prompt = "bad quality, worse quality"
-        height = getattr(args, 'H', 512)
-        width = getattr(args, 'W', 512) 
-        steps = getattr(args, 'steps', 25)
-        guidance_scale = getattr(args, 'scale', 7.5)
-                
-        print(f"Generation parameters:")
-        print(f"  Frames: {num_frames} (target: {original_num_frames})")
-        print(f"  Size: {width}x{height}")
-        print(f"  Steps: {steps}")
-        print(f"  Guidance: {guidance_scale}")
-        print(f"  Seed: {seed}")
-        
-        # Generate complete video for this line/prompt
-        print("Generating video...")
-        with torch.no_grad():
-            result = pipe(
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                num_frames=num_frames,
-                height=height,
-                width=width,
-                num_inference_steps=steps,
-                guidance_scale=guidance_scale,
-                generator=generator,
-            )
-        
-        frames = result.frames[0]
-        print(f"Generated {len(frames)} frames successfully")
-        
-        # Adjust frame count to match target duration
-        if len(frames) != original_num_frames:
-            if len(frames) < original_num_frames:
-                print(f"Extending video from {len(frames)} to {original_num_frames} frames")
-                last_frame = frames[-1]
-                while len(frames) < original_num_frames:
-                    frames.append(last_frame.copy())
+        # Calculate optimal segment distribution
+        if num_frames <= OPTIMAL_FRAMES:
+            # Single segment
+            segments_info = [(max(num_frames, MIN_FRAMES), num_frames)]
+            print(f"Single segment: generating {segments_info[0][0]} frames, using {segments_info[0][1]}")
+        else:
+            # Multiple segments - distribute evenly to avoid short last segment
+            segments_needed = (num_frames + OPTIMAL_FRAMES - 1) // OPTIMAL_FRAMES  # Ceiling division
+            
+            # Calculate base frames per segment and remainder
+            base_frames_per_segment = num_frames // segments_needed
+            remainder = num_frames % segments_needed
+            
+            # Ensure each segment has at least MIN_FRAMES
+            if base_frames_per_segment < MIN_FRAMES:
+                # Need to generate more frames per segment for quality
+                generate_frames_per_segment = MIN_FRAMES
             else:
-                print(f"Trimming video from {len(frames)} to {original_num_frames} frames")
-                frames = frames[:original_num_frames]
+                # Can distribute more evenly
+                generate_frames_per_segment = min(base_frames_per_segment + (remainder > 0), OPTIMAL_FRAMES)
+            
+            # Create segment plan
+            segments_info = []
+            frames_distributed = 0
+            
+            for i in range(segments_needed):
+                # Calculate how many frames this segment should contribute to final video
+                if i < remainder:
+                    frames_to_use = base_frames_per_segment + 1
+                else:
+                    frames_to_use = base_frames_per_segment
+                
+                # But generate at least MIN_FRAMES for quality
+                frames_to_generate = max(frames_to_use, generate_frames_per_segment)
+                
+                segments_info.append((frames_to_generate, frames_to_use))
+                frames_distributed += frames_to_use
+            
+            # Debug output
+            print(f"Multi-segment plan for {num_frames} frames:")
+            for i, (gen, use) in enumerate(segments_info):
+                print(f"  Segment {i+1}: generate {gen} frames, use {use} frames")
+            print(f"  Total frames that will be used: {frames_distributed}")
         
-        # Clean up pipeline completely to free memory for next line
-        del pipe
-        del adapter
-        del scheduler
-        torch.cuda.empty_cache()
+        # Generate each segment
+        for segment_idx, (frames_to_generate, frames_to_use) in enumerate(segments_info):
+            segment_count = segment_idx + 1
+            
+            print(f"Generating segment {segment_count}/{len(segments_info)}: {frames_to_generate} frames (will use {frames_to_use})")
+            
+            # Force GPU memory cleanup before each segment
+            torch.cuda.empty_cache()
+            
+            # Load fresh AnimateDiff pipeline for each segment
+            adapter = MotionAdapter.from_pretrained(
+                "guoyww/animatediff-motion-adapter-v1-5-2", 
+                torch_dtype=torch.float16
+            )
+            
+            model_id = "SG161222/Realistic_Vision_V5.1_noVAE"
+            
+            pipe = AnimateDiffPipeline.from_pretrained(
+                model_id, 
+                motion_adapter=adapter, 
+                torch_dtype=torch.float16,
+            ).to(root.device)
+            
+            # Configure scheduler
+            scheduler = DDIMScheduler.from_pretrained(
+                model_id,
+                subfolder="scheduler",
+                clip_sample=False,
+                timestep_spacing="linspace",
+                beta_schedule="linear",
+                steps_offset=1,
+            )
+            pipe.scheduler = scheduler
+            
+            # Apply LoRA for characters that appear in this line
+            if characters and line_number is not None:
+                line_characters = [char for char in characters if char.appears_in_line(line_number)]
+                if line_characters:
+                    _apply_character_loras(pipe, line_characters)
+
+            # Enable memory optimizations
+            pipe.enable_vae_slicing()
+            pipe.enable_model_cpu_offload()
+            pipe.set_progress_bar_config(disable=True)
+            
+            # Generation parameters
+            seed = getattr(args, 'seed', 42) + segment_count  # Vary seed slightly for each segment
+            generator = torch.Generator(device=root.device).manual_seed(seed)
+            
+            negative_prompt = "bad quality, worse quality"
+            height = getattr(args, 'H', 512)
+            width = getattr(args, 'W', 512) 
+            steps = getattr(args, 'steps', 25)
+            guidance_scale = getattr(args, 'scale', 7.5)
+            
+            print(f"  Segment {segment_count} parameters:")
+            print(f"    Frames: {frames_to_generate}")
+            print(f"    Seed: {seed}")
+            
+            # Generate video segment
+            print(f"  Generating segment {segment_count}...")
+            with torch.no_grad():
+                result = pipe(
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    num_frames=frames_to_generate,
+                    height=height,
+                    width=width,
+                    num_inference_steps=steps,
+                    guidance_scale=guidance_scale,
+                    generator=generator,
+                )
+            
+            segment_frames = result.frames[0]
+            print(f"  Generated {len(segment_frames)} frames for segment {segment_count}")
+            
+            # Take only the frames we need from this segment
+            all_frames.extend(segment_frames[:frames_to_use])
+            
+            # Clean up pipeline for this segment
+            del pipe
+            del adapter
+            del scheduler
+            torch.cuda.empty_cache()
         
-        return frames
+        print(f"Generated total of {len(all_frames)} frames from {len(segments_info)} segments")
+        return all_frames
         
     except Exception as e:
         print(f"Error generating video for line: {e}")
@@ -327,23 +363,12 @@ def _stitch_video_segments_together(video_segments):
     for segment in video_segments:
         line_number = segment['line_number']
         frames = segment['frames']
-        target_duration = segment['target_duration']
         generated_frames = segment['generated_frames']
         
         print(f"Adding video for line {line_number}: {generated_frames} frames")
         
-        # Add all frames from this video segment
+        # Simply add all frames from this video segment
         final_frames.extend(frames)
-        
-        # If the generated video is shorter than the target duration,
-        # extend it by repeating the last frame
-        if generated_frames < target_duration:
-            frames_to_extend = target_duration - generated_frames
-            last_frame = frames[-1]
-            
-            print(f"  Extending line {line_number} by {frames_to_extend} frames")
-            for _ in range(frames_to_extend):
-                final_frames.append(last_frame)
     
     print(f"Final video: {len(final_frames)} total frames from {len(video_segments)} lines")
     return final_frames
