@@ -33,17 +33,12 @@ def generate_animatediff_video(args, anim_args, animation_prompts, root, charact
     # Get all unique lines/prompts - each will become one video segment
     lines = _extract_lines_from_animation_prompts(animation_prompts, anim_args.max_frames)
     
-    print(f"Found {len(lines)} unique lines/prompts:")
-    for i, line in enumerate(lines):
-        print(f"  Line {i+1}: '{line['prompt'][:50]}...' (duration: {line['duration']} frames)")
-    
     # Generate one video segment for each line/prompt
     all_video_segments = []
     
     for line_idx, line in enumerate(lines):
         print(f"\n--- GENERATING VIDEO FOR LINE {line_idx + 1}/{len(lines)} ---")
         print(f"Prompt: {line['prompt']}")
-        print(f"Target duration: {line['duration']} frames")
         
         # Calculate how many frames to generate for this video segment
         # Use the line duration but cap it for memory/quality reasons
@@ -195,22 +190,10 @@ def _generate_video_for_line(prompt, num_frames, characters, args, root, line_nu
     try:
         print(f"Loading AnimateDiff pipeline for: '{prompt[:50]}...'")
         
-        # CONSISTENT FRAME COUNT APPROACH:
-        # Always use the same frame count to avoid LoRA conflicts
-        # We'll adjust the final video length by duplicating/trimming frames
-        CONSISTENT_FRAME_COUNT = 32  # Use 32 for all generations
-        
-        original_num_frames = num_frames
-        num_frames = CONSISTENT_FRAME_COUNT
-        
-        print(f"Using consistent frame count: {num_frames} (target: {original_num_frames})")
-        
-        # Change this back to variable frame counts
         # AnimateDiff works best with specific frame counts
-        # Common working values: 16, 24, 32, 48, 64
-        valid_frame_counts = [16, 24, 32, 48, 64]
+        valid_frame_counts = [16, 32]
 
-        # Find the closest valid frame count
+        # Find the closest valid frame count to what was requested
         original_num_frames = num_frames
         num_frames = min(valid_frame_counts, key=lambda x: abs(x - num_frames))
 
@@ -232,8 +215,6 @@ def _generate_video_for_line(prompt, num_frames, characters, args, root, line_nu
             model_id, 
             motion_adapter=adapter, 
             torch_dtype=torch.float16,
-            safety_checker=None,
-            requires_safety_checker=False
         ).to(root.device)
         
         # Configure scheduler
@@ -253,7 +234,7 @@ def _generate_video_for_line(prompt, num_frames, characters, args, root, line_nu
             line_characters = [char for char in characters if char.appears_in_line(line_number)]
             if line_characters:
                 _apply_character_loras(pipe, line_characters)
-        
+
         # Enable memory optimizations
         pipe.enable_vae_slicing()
         pipe.enable_model_cpu_offload()
@@ -263,16 +244,12 @@ def _generate_video_for_line(prompt, num_frames, characters, args, root, line_nu
         seed = getattr(args, 'seed', 42)
         generator = torch.Generator(device=root.device).manual_seed(seed)
         
-        negative_prompt = getattr(args, 'negative_prompt', "bad quality, worse quality, low resolution, blurry")
+        negative_prompt = "bad quality, worse quality"
         height = getattr(args, 'H', 512)
         width = getattr(args, 'W', 512) 
         steps = getattr(args, 'steps', 25)
         guidance_scale = getattr(args, 'scale', 7.5)
-        
-        # Ensure dimensions are divisible by 8 (required by diffusion models)
-        height = height - (height % 8)
-        width = width - (width % 8)
-        
+                
         print(f"Generation parameters:")
         print(f"  Frames: {num_frames} (target: {original_num_frames})")
         print(f"  Size: {width}x{height}")
@@ -400,29 +377,25 @@ def _apply_character_loras(pipe, characters):
         unet_path = os.path.join(base_model_path, "unet")
         text_encoder_path = os.path.join(base_model_path, "text_encoder")
         
-        try:
-            print(f"  Applying UNet LoRA for {character.name} from {unet_path}")
-            if os.path.exists(unet_path):
-                pipe.unet = PeftModel.from_pretrained(pipe.unet, unet_path)
-            else:
-                print(f"    Warning: UNet LoRA path does not exist: {unet_path}")
-                return
-            
-            print(f"  Applying Text Encoder LoRA for {character.name} from {text_encoder_path}")
-            if os.path.exists(text_encoder_path):
-                pipe.text_encoder = PeftModel.from_pretrained(pipe.text_encoder, text_encoder_path)
-            else:
-                print(f"    Warning: Text Encoder LoRA path does not exist: {text_encoder_path}")
-                return
-            
-            print(f"  Successfully applied LoRA for {character.name}")
-            
-        except Exception as e:
-            print(f"  Error applying LoRA for {character.name}: {e}")
-            # Don't raise the exception, just continue without LoRA
+        print(f"  Applying UNet LoRA for {character.name} from {unet_path}")
+        if os.path.exists(unet_path):
+            pipe.unet = PeftModel.from_pretrained(pipe.unet, unet_path)
+        else:
+            print(f"    Error: UNet LoRA path does not exist: {unet_path}")
+            raise FileNotFoundError(f"UNet LoRA path not found: {unet_path}")
+        
+        print(f"  Applying Text Encoder LoRA for {character.name} from {text_encoder_path}")
+        if os.path.exists(text_encoder_path):
+            pipe.text_encoder = PeftModel.from_pretrained(pipe.text_encoder, text_encoder_path)
+        else:
+            print(f"    Error: Text Encoder LoRA path does not exist: {text_encoder_path}")
+            raise FileNotFoundError(f"Text Encoder LoRA path not found: {text_encoder_path}")
+        
+        print(f"  Successfully applied LoRA for {character.name}")
             
     except Exception as e:
         print(f"Error applying character LoRAs: {e}")
+        raise e  # Re-raise the exception to stop execution
 
 
 def _save_frames_to_disk(frames, args):
@@ -472,11 +445,7 @@ def _save_frames_to_disk(frames, args):
                         frame_image.save(os.path.join(args.outdir, filename))
                 
                 saved_count += 1
-                
-                # Display progress occasionally
-                if frame_idx % 10 == 0:
-                    print(f"  Saved frame {frame_idx}: {filename}")
-                    
+                                    
             except Exception as e:
                 print(f"Error saving frame {frame_idx}: {e}")
                 continue
