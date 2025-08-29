@@ -284,10 +284,10 @@ def _generate_video_for_line(prompt, num_frames, characters, args, root, line_nu
             # Enable memory optimizations
             pipe.enable_vae_slicing()
             pipe.enable_model_cpu_offload()
-            pipe.set_progress_bar_config(disable=True)
+            #pipe.set_progress_bar_config(disable=True)
             
             # Generation parameters
-            seed = getattr(args, 'seed', 42) + segment_count  # Vary seed slightly for each segment
+            seed = getattr(args, 'seed', 42)
             generator = torch.Generator(device=root.device).manual_seed(seed)
             
             negative_prompt = "bad quality, worse quality"
