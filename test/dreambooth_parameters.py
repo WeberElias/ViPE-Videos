@@ -3,6 +3,8 @@
 DreamBooth Parameter Testing Script - One-at-a-time Testing
 Tests one parameter at a time against a baseline configuration
 """
+# USE THIS COMAND IN BASH TO GET THE CURRENT STATUS
+# jq '{total: .total_combinations, completed: .completed_count, failed: [.combinations[] | select(.status=="failed")] | length, pending: [.combinations[] | select(.status=="pending")] | length, running: [.combinations[] | select(.status=="running")] | length}' /graphics/scratch2/students/webereli/parameter_testing/dreambooth_config.json
 
 import os
 import torch
@@ -11,6 +13,12 @@ import time
 import fcntl
 from diffusers import StableDiffusionPipeline
 from peft import PeftModel
+import sys
+import os
+
+# Add the helpers directory to sys.path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../helpers')))
+
 from train_dreambooth_script import train_dreambooth, is_valid_lora_directory
 
 def load_lora_pipeline(lora_model_path, base_model_name="SG161222/Realistic_Vision_V5.1_noVAE", device="cuda"):
@@ -371,7 +379,7 @@ def train_and_test_parameters(instance_dir, base_output_dir, unique_identifier, 
         # Load pipeline with trained LoRA
         pipe = load_lora_pipeline(model_output_dir, device=device)
         
-        # Generate 10 test images for faster evaluation
+        # Generate 25 test images for evaluation
         test_prompts = [
             f"portrait of {unique_identifier}, professional photography, studio lighting",
             f"close-up of {unique_identifier} smiling, natural lighting",
@@ -382,7 +390,22 @@ def train_and_test_parameters(instance_dir, base_output_dir, unique_identifier, 
             f"{unique_identifier} with wind in hair, outdoor portrait",
             f"close-up {unique_identifier} laughing, genuine happiness",
             f"{unique_identifier} face in golden hour light, warm tones",
-            f"portrait {unique_identifier} in candlelight, romantic mood"
+            f"portrait {unique_identifier} in candlelight, romantic mood",
+            f"{unique_identifier} face with raindrops, wet hair",
+            f"headshot {unique_identifier} with red lipstick, glamorous",
+            f"{unique_identifier} face in morning light, fresh awakening",
+            f"close-up {unique_identifier} biting lip, thoughtful gesture",
+            f"{unique_identifier} face with makeup, evening ready",
+            f"portrait {unique_identifier} in candlelight, romantic mood",
+            f"{unique_identifier} face showing surprise, wide eyes",
+            f"{unique_identifier} standing in a park, full body shot",
+            f"{unique_identifier} walking on a beach, sunset background",
+            f"{unique_identifier} sitting on a bench, reading book",
+            f"{unique_identifier} in a coffee shop, casual setting",
+            f"{unique_identifier} dancing in a meadow, joyful movement",
+            f"close-up {unique_identifier} with hat, fashionable style",
+            f"{unique_identifier} face in mirror reflection, self-portrait",
+            f"headshot {unique_identifier} with messy hair, casual look"
         ]
         
         # Generate test images
@@ -420,7 +443,7 @@ def main():
     # =============================================================================
     
     NAME = "alice"
-    DESCRIPTION = "woman, young, blonde"
+    DESCRIPTION = "woman, young, black curly hair"
     INSTANCE_DIR = f"/graphics/scratch2/students/webereli/parameter_testing/training_images_test_file/{NAME}"
     BASE_OUTPUT_DIR = "/graphics/scratch2/students/webereli/parameter_testing/"
     CONFIG_FILE = os.path.join(BASE_OUTPUT_DIR, "dreambooth_config.json")
