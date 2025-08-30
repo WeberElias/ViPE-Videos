@@ -94,6 +94,12 @@ def generate_variations(NAME):
         variations.append(prompt + ", " + postfixes["gemini"][i])
         variation_names.append(f"postfix_gemini_base{i+1}")
     
+    # Then for each prefix (except none and gemini)
+    for prefix_name in ["vipe", "vipe+background", "background", "background2"]:
+        for i, prompt in enumerate(base_prompts):
+            variations.append(prefixes[prefix_name] + ", " + prompt)
+            variation_names.append(f"prefix_{prefix_name}_base{i+1}")
+    
     # Then for each prefix (gemini only)
     for i, prompt in enumerate(base_prompts):
         variations.append(prefixes["gemini"][i] + prompt)

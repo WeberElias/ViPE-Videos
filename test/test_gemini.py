@@ -21,7 +21,7 @@ LYRIC2PROMPT = f"{BASE_DIR}apt_ctx_1_sample_True_vipe_True_abst_0.7_lyric2prompt
 VARIATION = "additional_information2"
 ADDITIONAL_INFORAMTION = f"{BASE_DIR}additional_information.txt"
 
-ADDITIONAL_INFO_PREFIX = "Are the prompts fitting with the meaning of the song? If not, fix missinterpretations or things that don't fit. Heres some additional information about the song that you should use for you decision. Only use the informatin provided."
+ADDITIONAL_INFO_PREFIX = "Are the prompts fitting with the meaning of the song? If not, fix missinterpretations or ambiguity. Don't explain why. Heres some additional information about the song that you should use for you decision. Only use the information I provide."
 
 
 def load_prompt_template_with_additional_info(template_path, additional_info_path=None):
