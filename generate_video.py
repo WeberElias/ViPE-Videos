@@ -127,7 +127,7 @@ def main():
     my_args.n_img_reward_samples = user_args.image_quality_number
     my_args.caption_mode = user_args.caption_mode  # set to None to skip adding lyrics, set to 'lyrics' to only add lyrics and 'both' to add both lyrics and prompts
     if skip_new:
-        my_args.postfix_prompts = ", high quality, realistic, wide, masterpiece, best quality"
+        my_args.postfix_prompts = ", wide shot, establishing shot, scenic view, immersive environment, background in focus, balanced framing"
     else:
         my_args.postfix_prompts = ", extreme detail, high quality, HD, 32K, dramatic lighting, ultra-realistic, high detailed photography, vivid, vibrant, intricate, trending on artstation"
     my_args.prompt_file = '{}/{}_ctx_{}_sample_{}_vipe_{}_abst_{}_lyric2prompt'.format(mp3_dir, mp3_name,
@@ -408,9 +408,15 @@ def main():
 
         animation_prompts, lyric2prompt = Character.replace_character_names_in_prompts(lyric2prompt, characters)
 
-    # Add postfix to all prompts
-    for frame_num, prompt_text in animation_prompts.items():
-        animation_prompts[frame_num] = prompt_text + my_args.postfix_prompts
+    # Add postfix to all prompts - as prefix if using Dreambooth
+    if skip_dreambooth:
+        for frame_num, prompt_text in animation_prompts.items():
+            animation_prompts[frame_num] = prompt_text + my_args.postfix_prompts
+    else:
+        for frame_num, prompt_text in animation_prompts.items():
+            animation_prompts[frame_num] = my_args.postfix_prompts + prompt_text 
+    
+    
     
     name = 'test_{}_rews_{}_{}fps_{}ctx_{}_vipe_{}_abst_{}'.format(my_args.animation_mode, my_args.n_img_reward_samples,
                                                                    fps_p, my_args.context_size, mp3_name,
