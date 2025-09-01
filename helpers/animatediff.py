@@ -3,12 +3,12 @@ import torch
 import numpy as np
 from PIL import Image
 import cv2
-from diffusers import AnimateDiffPipeline, DDIMScheduler, MotionAdapter
+from diffusers import AnimateDiffPipeline, AnimateDiffControlNetPipeline, DDIMScheduler, MotionAdapter, ControlNetModel
 from peft import PeftModel
 
 def generate_animatediff_video(args, anim_args, animation_prompts, root, characters=None):
     """
-    Generate video using AnimateDiff with one video segment per line/prompt.
+    Generate video using AnimateDiff with optional ControlNet and one video segment per line/prompt.
     Each line/prompt gets its own complete video.
     All videos are concatenated to form the final video.
     
@@ -22,12 +22,15 @@ def generate_animatediff_video(args, anim_args, animation_prompts, root, charact
     Returns:
         str: Path to the generated video file
     """
-    
+    # Configuration - ControlNet
+    use_controlnet = False
+
     # Configuration - use AnimateDiff-compatible frame counts
     MAX_FRAMES_PER_SEGMENT = 64  # AnimateDiff max
     MIN_FRAMES_PER_SEGMENT = 16  # AnimateDiff min (changed from 8)
     
-    print("=== ANIMATEDIFF VIDEO GENERATION ===")
+    pipeline_type = "CONTROLNET" if use_controlnet else "REGULAR"
+    print(f"=== ANIMATEDIFF {pipeline_type} VIDEO GENERATION ===")
     print(f"Total lines/prompts to process: {len(animation_prompts)}")
     
     # Get all unique lines/prompts - each will become one video segment
@@ -49,14 +52,24 @@ def generate_animatediff_video(args, anim_args, animation_prompts, root, charact
         
         try:
             # Generate complete video for this line/prompt
-            video_frames = _generate_video_for_line(
-                prompt=line['prompt'],
-                num_frames=frames_to_generate,
-                characters=characters,  # Pass all characters instead of line-specific ones
-                args=args,
-                root=root,
-                line_number=line_idx  # Add the line number parameter
-            )
+            if use_controlnet:
+                video_frames = _generate_video_for_line_with_controlnet(
+                    prompt=line['prompt'],
+                    num_frames=frames_to_generate,
+                    characters=characters,  # Pass all characters instead of line-specific ones
+                    args=args,
+                    root=root,
+                    line_number=line_idx  # Add the line number parameter
+                )
+            else:
+                video_frames = _generate_video_for_line(
+                    prompt=line['prompt'],
+                    num_frames=frames_to_generate,
+                    characters=characters,  # Pass all characters instead of line-specific ones
+                    args=args,
+                    root=root,
+                    line_number=line_idx  # Add the line number parameter
+                )
             
             if video_frames and len(video_frames) > 0:
                 print(f"Successfully generated {len(video_frames)} frames for line {line_idx + 1}")
@@ -170,7 +183,6 @@ def _extract_lines_from_animation_prompts(animation_prompts, max_frames):
     
     return lines
 
-
 def _generate_video_for_line(prompt, num_frames, characters, args, root, line_number=None):
     """
     Generate a complete video for one line/prompt using AnimateDiff.
@@ -281,6 +293,10 @@ def _generate_video_for_line(prompt, num_frames, characters, args, root, line_nu
                 if line_characters:
                     _apply_character_loras(pipe, line_characters)
 
+            # enable FreeInit
+            # Refer to the enable_free_init documentation for a full list of configurable parameters
+            pipe.enable_free_init(method="butterworth", use_fast_sampling=True)
+
             # Enable memory optimizations
             pipe.enable_vae_slicing()
             pipe.enable_model_cpu_offload()
@@ -344,6 +360,212 @@ def _generate_video_for_line(prompt, num_frames, characters, args, root, line_nu
         
         return None
 
+def _generate_video_for_line_with_controlnet(prompt, num_frames, characters, args, root, line_number=None):
+    """
+    Generate a complete video for one line/prompt using AnimateDiff ControlNet.
+    If more than 32 frames are needed, generate multiple video segments and concatenate them.
+    
+    Args:
+        prompt: Text prompt for this line
+        num_frames: Number of frames to generate
+        characters: List of Character objects (all characters)
+        args: Generation arguments
+        root: Root object with model and device
+        line_number: The line number being processed (0-indexed)
+        
+    Returns:
+        List of PIL Images or None if generation failed
+    """
+    
+    try:
+        print(f"Loading AnimateDiff ControlNet pipeline for: '{prompt[:50]}...'")
+        
+        # AnimateDiff works best with 16 or 32 frames
+        OPTIMAL_FRAMES = 32
+        MIN_FRAMES = 16
+        
+        all_frames = []
+        
+        # Calculate optimal segment distribution
+        if num_frames <= OPTIMAL_FRAMES:
+            # Single segment
+            segments_info = [(max(num_frames, MIN_FRAMES), num_frames)]
+            print(f"Single segment: generating {segments_info[0][0]} frames, using {segments_info[0][1]}")
+        else:
+            # Multiple segments - distribute evenly to avoid short last segment
+            segments_needed = (num_frames + OPTIMAL_FRAMES - 1) // OPTIMAL_FRAMES  # Ceiling division
+            
+            # Calculate base frames per segment and remainder
+            base_frames_per_segment = num_frames // segments_needed
+            remainder = num_frames % segments_needed
+            
+            # Ensure each segment has at least MIN_FRAMES
+            if base_frames_per_segment < MIN_FRAMES:
+                # Need to generate more frames per segment for quality
+                generate_frames_per_segment = MIN_FRAMES
+            else:
+                # Can distribute more evenly
+                generate_frames_per_segment = min(base_frames_per_segment + (remainder > 0), OPTIMAL_FRAMES)
+            
+            # Create segment plan
+            segments_info = []
+            frames_distributed = 0
+            
+            for i in range(segments_needed):
+                # Calculate how many frames this segment should contribute to final video
+                if i < remainder:
+                    frames_to_use = base_frames_per_segment + 1
+                else:
+                    frames_to_use = base_frames_per_segment
+                
+                # But generate at least MIN_FRAMES for quality
+                frames_to_generate = max(frames_to_use, generate_frames_per_segment)
+                
+                segments_info.append((frames_to_generate, frames_to_use))
+                frames_distributed += frames_to_use
+            
+            # Debug output
+            print(f"Multi-segment plan for {num_frames} frames:")
+            for i, (gen, use) in enumerate(segments_info):
+                print(f"  Segment {i+1}: generate {gen} frames, use {use} frames")
+            print(f"  Total frames that will be used: {frames_distributed}")
+        
+        # Generate each segment
+        for segment_idx, (frames_to_generate, frames_to_use) in enumerate(segments_info):
+            segment_count = segment_idx + 1
+            
+            print(f"Generating segment {segment_count}/{len(segments_info)}: {frames_to_generate} frames (will use {frames_to_use})")
+            
+            # Force GPU memory cleanup before each segment
+            torch.cuda.empty_cache()
+            
+            # Load fresh AnimateDiff ControlNet pipeline for each segment
+            adapter = MotionAdapter.from_pretrained(
+                "guoyww/animatediff-motion-adapter-v1-5-2", 
+                torch_dtype=torch.float16
+            )
+            
+            # Load a basic ControlNet - using depth ControlNet as placeholder
+            controlnet = ControlNetModel.from_pretrained(
+                "lllyasviel/sd-controlnet-depth",
+                torch_dtype=torch.float16
+            )
+            
+            model_id = "SG161222/Realistic_Vision_V5.1_noVAE"
+            
+            pipe = AnimateDiffControlNetPipeline.from_pretrained(
+                model_id, 
+                motion_adapter=adapter,
+                controlnet=controlnet,
+                torch_dtype=torch.float16,
+            ).to(root.device)
+            
+            # Configure scheduler
+            scheduler = DDIMScheduler.from_pretrained(
+                model_id,
+                subfolder="scheduler",
+                clip_sample=False,
+                timestep_spacing="linspace",
+                beta_schedule="linear",
+                steps_offset=1,
+            )
+            pipe.scheduler = scheduler
+            
+            # Apply LoRA for characters that appear in this line
+            if characters and line_number is not None:
+                line_characters = [char for char in characters if char.appears_in_line(line_number)]
+                if line_characters:
+                    _apply_character_loras(pipe, line_characters)
+
+            # enable FreeInit
+            # Refer to the enable_free_init documentation for a full list of configurable parameters
+            pipe.enable_free_init(method="butterworth", use_fast_sampling=True)
+
+            # Enable memory optimizations
+            pipe.enable_vae_slicing()
+            pipe.enable_model_cpu_offload()
+            
+            # Generation parameters
+            seed = getattr(args, 'seed', 42)
+            generator = torch.Generator(device=root.device).manual_seed(seed)
+            
+            negative_prompt = "bad quality, worse quality"
+            height = getattr(args, 'H', 512)
+            width = getattr(args, 'W', 512) 
+            steps = getattr(args, 'steps', 25)
+            guidance_scale = getattr(args, 'scale', 7.5)
+            
+            # Load and prepare custom conditioning image
+            try:
+                CONDITIONING_IMAGE = "/graphics/scratch2/students/webereli/test/toystore.png"
+                print(f"Loading conditioning image from: {CONDITIONING_IMAGE}")
+                conditioning_image = Image.open(CONDITIONING_IMAGE).convert('RGB')
+                # Resize to match generation dimensions
+                conditioning_image = conditioning_image.resize((width, height), Image.Resampling.LANCZOS)
+                print(f"Conditioning image loaded and resized to {width}x{height}")
+            except Exception as e:
+                print(f"Error loading conditioning image: {e}")
+                print("Falling back to black placeholder images")
+                conditioning_image = Image.new('RGB', (width, height), (0, 0, 0))
+            
+            # Create conditioning frames - use the same image for all frames
+            conditioning_frames = []
+            for _ in range(frames_to_generate):
+                conditioning_frames.append(conditioning_image.copy())
+            
+            print(f"  Segment {segment_count} parameters:")
+            print(f"    Frames: {frames_to_generate}")
+            print(f"    Seed: {seed}")
+            print(f"    Conditioning frames: {len(conditioning_frames)} copies of custom image")
+            
+            # Generate video segment
+            print(f"  Generating segment {segment_count}...")
+            with torch.no_grad():
+                result = pipe(
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    num_frames=frames_to_generate,
+                    height=height,
+                    width=width,
+                    num_inference_steps=steps,
+                    guidance_scale=guidance_scale,
+                    generator=generator,
+                    conditioning_frames=conditioning_frames,
+                    controlnet_conditioning_scale=0.8,  # Higher influence since we have a real image
+                )
+            
+            segment_frames = result.frames[0]
+            print(f"  Generated {len(segment_frames)} frames for segment {segment_count}")
+            
+            # Take only the frames we need from this segment
+            all_frames.extend(segment_frames[:frames_to_use])
+            
+            # Clean up pipeline for this segment
+            del pipe
+            del adapter
+            del controlnet
+            del scheduler
+            torch.cuda.empty_cache()
+        
+        print(f"Generated total of {len(all_frames)} frames from {len(segments_info)} segments")
+        return all_frames
+        
+    except Exception as e:
+        print(f"Error generating video for line: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        # Cleanup on error
+        try:
+            del pipe
+            del adapter
+            del controlnet
+            torch.cuda.empty_cache()
+        except:
+            pass
+        
+        return None
+
 
 def _stitch_video_segments_together(video_segments):
     """
@@ -379,7 +601,7 @@ def _apply_character_loras(pipe, characters):
     Apply LoRA models for characters to the pipeline.
     
     Args:
-        pipe: AnimateDiff pipeline
+        pipe: AnimateDiff ControlNet pipeline
         characters: List of Character objects that should appear in this line
     """
     
