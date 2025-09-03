@@ -53,9 +53,100 @@ def load_prompt_template(prompt_file_path=None):
         print(f"Error reading prompt file: {e}")
         return None
 
+def create_revision_prompt(original_response, additional_info):
+    """
+    Create a revision prompt with additional information - only revise prompts, keep characters unchanged
+    """
+    revision_prompt = f"""Based on the following additional information, please revise and improve ONLY the prompt interpretations. DO NOT change the characters in any way - keep them exactly as they are.
+
+Only make changes to the prompts where the additional information indicates problems or improvements are needed. Fix misinterpretations or ambiguity in the prompts only. Don't explain why. Only use the information I provide.
+
+Additional Information:
+{additional_info}
+
+Previous Response:
+{original_response}
+
+Please provide the revised version in the same format as before (two JSON blocks in markdown code blocks - first the updated prompts with your revisions, then the EXACT SAME characters without any changes)."""
+    
+    return revision_prompt
+
+def get_user_approval_and_feedback(updated_prompts_path, characters_path):
+    """
+    Show user the generated content and get approval or additional feedback
+    
+    Returns:
+        tuple: (approved: bool, additional_info: str or None)
+    """
+    print("\n" + "="*60)
+    print("GEMINI INTERPRETATION REVIEW")
+    print("="*60)
+    
+    # Show characters
+    if characters_path and os.path.exists(characters_path):
+        with open(characters_path, 'r') as f:
+            characters = json.load(f)
+        
+        print(f"\nGenerated {len(characters)} characters:")
+        for i, char in enumerate(characters, 1):
+            print(f"  {i}. {char.get('name', 'Unknown')}")
+            print(f"     Description: {char.get('description', 'No description')}")
+            print()
+    
+    # Show sample of updated prompts
+    if updated_prompts_path and os.path.exists(updated_prompts_path):
+        with open(updated_prompts_path, 'r') as f:
+            updated_prompts = json.load(f)
+        
+        print(f"Sample of updated prompts (showing first 3 of {len(updated_prompts)}):")
+        for i, entry in enumerate(updated_prompts[:3]):
+            start_time = entry.get('start', 'Unknown')
+            prompt = entry.get('prompt', 'No prompt')
+            print(f"  {i+1}. Time {start_time}s: {prompt[:100]}{'...' if len(prompt) > 100 else ''}")
+        print()
+    
+    print("Do you approve this interpretation of your lyrics/story?")
+    print("The characters and prompts will be used to generate your video.")
+    
+    while True:
+        user_input = input("\nApprove interpretation? (y/n/help): ").lower().strip()
+        
+        if user_input in ['y', 'yes']:
+            return True, None
+        elif user_input in ['n', 'no']:
+            print("\nPlease provide additional information to improve the interpretation:")
+            print("Be specific about what should be changed, added, or corrected.")
+            print("Press Enter twice to finish.")
+            
+            additional_info_lines = []
+            while True:
+                line = input()
+                if line == "" and additional_info_lines and additional_info_lines[-1] == "":
+                    break
+                additional_info_lines.append(line)
+            
+            # Remove the last empty line
+            if additional_info_lines and additional_info_lines[-1] == "":
+                additional_info_lines.pop()
+                
+            additional_info = "\n".join(additional_info_lines).strip()
+            
+            if not additional_info:
+                print("No additional information provided. Please try again.")
+                continue
+                
+            return False, additional_info
+        elif user_input == 'help':
+            print("\nHelp:")
+            print("y/yes - Approve the current interpretation and continue with video generation")
+            print("n/no  - Provide additional information to improve the interpretation")
+            print("help  - Show this help message")
+        else:
+            print("Please enter 'y', 'n', or 'help'")
+
 def generate_characters(model, json_file_path, output_dir="./", prompt_file_path=None, logger=None):
     """
-    Generate characters from lyrics interpretation file using Gemini
+    Generate characters from lyrics interpretation file using Gemini with user approval loop
     
     Args:
         model: Gemini model instance
@@ -84,24 +175,81 @@ def generate_characters(model, json_file_path, output_dir="./", prompt_file_path
             return False, None, None
         
         # Format the prompt with the JSON content
-        prompt = prompt_template.format(json_content=json_content)
+        initial_prompt = prompt_template.format(json_content=json_content)
+        current_prompt = initial_prompt
         
-        # Call Gemini
-        gemini_response = call_gemini(model, prompt)
+        iteration = 0
+        max_iterations = 3  # Prevent infinite loops
         
-        if logger:
-            logger.log_gemini_prompt_and_response(prompt, gemini_response, success=(gemini_response is not None))
+        while iteration < max_iterations:
+            iteration += 1
+            print(f"\nCalling Gemini (attempt {iteration})...")
+            
+            # Call Gemini
+            gemini_response = call_gemini(model, current_prompt)
+            
+            # Log the interaction
+            if logger:
+                logger.log_gemini_prompt_and_response(
+                    current_prompt, 
+                    gemini_response, 
+                    success=(gemini_response is not None),
+                    iteration=iteration
+                )
+            
+            if gemini_response is None:
+                print("Error: Failed to get response from Gemini")
+                return False, None, None
+            
+            # Validate and save the response
+            success, updated_prompts_path, characters_path = validate_and_save_gemini_response(
+                gemini_response, json_file_path, output_dir
+            )
+            
+            if not success:
+                print("Error: Failed to validate Gemini response")
+                if iteration < max_iterations:
+                    print("Retrying with original prompt...")
+                    current_prompt = initial_prompt
+                    continue
+                else:
+                    return False, None, None
+            
+            # Get user approval
+            approved, additional_info = get_user_approval_and_feedback(updated_prompts_path, characters_path)
+            
+            if approved:
+                print("Interpretation approved by user!")
+                return True, updated_prompts_path, characters_path
+            
+            if additional_info and iteration < max_iterations:
+                print(f"User provided feedback, creating revision prompt...")
+                current_prompt = create_revision_prompt(gemini_response, additional_info)
+                
+                # Log the additional information
+                if logger:
+                    logger.log_user_feedback(additional_info, iteration)
+                    
+                continue
+            else:
+                if iteration >= max_iterations:
+                    print(f"Maximum iterations ({max_iterations}) reached.")
+                    print("Using the last generated version.")
+                    return True, updated_prompts_path, characters_path
+                else:
+                    print("No additional information provided, using current version.")
+                    return True, updated_prompts_path, characters_path
         
-        if gemini_response is None:
-            print("Error: Failed to get response from Gemini")
-            return False, None, None
-        
-        # Validate and save the response
-        return validate_and_save_gemini_response(gemini_response, json_file_path, output_dir)
+        return False, None, None
         
     except Exception as e:
         if logger:
-            logger.log_gemini_prompt_and_response(prompt if 'prompt' in locals() else "Failed to generate prompt", None, success=False, error=e)
+            logger.log_gemini_prompt_and_response(
+                current_prompt if 'current_prompt' in locals() else "Failed to generate prompt", 
+                None, 
+                success=False, 
+                error=e
+            )
         print(f"ERROR in generate_characters: {e}")
         print(f"Exception type: {type(e).__name__}")
         import traceback

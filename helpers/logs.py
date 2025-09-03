@@ -105,22 +105,34 @@ class VideoGenerationLogger:
         except Exception as e:
             self.log_error("vipe_interpretations", e)
     
-    def log_gemini_prompt_and_response(self, prompt, response, success=None, error=None):
-        """Log Gemini prompt and response"""
-        try:
-            gemini_data = {
-                "timestamp": self.timestamp,
-                "prompt": prompt,
-                "raw_response": response,
-                "success": success,
-                "error": str(error) if error else None
-            }
-            
-            with open(os.path.join(self.run_dir, "gemini", "prompt_and_response.json"), 'w') as f:
-                json.dump(gemini_data, f, indent=2)
-                        
-        except Exception as e:
-            self.log_error("gemini_logging", e)
+    def log_gemini_prompt_and_response(self, prompt, response, success=True, error=None, iteration=1):
+        """Log Gemini API interaction with iteration support"""
+        timestamp = datetime.datetime.now().isoformat()
+        
+        log_entry = {
+            "timestamp": timestamp,
+            "component": "gemini_api",
+            "iteration": iteration,
+            "success": success,
+            "prompt_length": len(prompt) if prompt else 0,
+            "response_length": len(response) if response else 0,
+            "error": str(error) if error else None
+        }
+        
+        # Save detailed prompt and response to separate files
+        if prompt:
+            prompt_file = os.path.join(self.detailed_logs_dir, f"gemini_prompt_iteration_{iteration}.txt")
+            with open(prompt_file, 'w', encoding='utf-8') as f:
+                f.write(prompt)
+            log_entry["prompt_file"] = prompt_file
+        
+        if response:
+            response_file = os.path.join(self.detailed_logs_dir, f"gemini_response_iteration_{iteration}.txt")
+            with open(response_file, 'w', encoding='utf-8') as f:
+                f.write(response)
+            log_entry["response_file"] = response_file
+        
+        self._write_log_entry("gemini_interactions", log_entry)
     
     def log_character_generation(self, characters, updated_prompts_path=None, characters_path=None):
         """Log character generation results"""
@@ -130,8 +142,23 @@ class VideoGenerationLogger:
                 "total_characters": len(characters) if characters else 0,
                 "updated_prompts_path": updated_prompts_path,
                 "characters_path": characters_path,
-                "characters": []
+                "characters": [],
+                "updated_prompts_content": None
             }
+            
+            # Read and store the content of updated_prompts file
+            if updated_prompts_path and os.path.exists(updated_prompts_path):
+                try:
+                    with open(updated_prompts_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                        # Try to parse as JSON if possible
+                        try:
+                            char_data["updated_prompts_content"] = json.loads(content)
+                        except json.JSONDecodeError:
+                            # If not valid JSON, store as plain text
+                            char_data["updated_prompts_content"] = content
+                except Exception as e:
+                    char_data["updated_prompts_content"] = f"Error reading file: {str(e)}"
             
             if characters:
                 for char in characters:
@@ -147,7 +174,7 @@ class VideoGenerationLogger:
             
             with open(os.path.join(self.run_dir, "gemini", "character_generation.json"), 'w') as f:
                 json.dump(char_data, f, indent=2)
-                        
+                    
         except Exception as e:
             self.log_error("character_generation", e)
     
