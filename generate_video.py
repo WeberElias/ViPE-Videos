@@ -13,6 +13,7 @@ import subprocess
 import time
 import gc
 import re
+import math
 from types import SimpleNamespace
 from ViPE.utils import dotdict, get_lyrtic2prompts, get_track_intensity, get_visual_effects, get_visual_effects_disco
 from ViPE.utils import add_audio_to_mp4, add_captions_to_video
@@ -147,6 +148,29 @@ def main():
     my_args.timestring = 'None'
 
     lyric2prompt = get_lyrtic2prompts(my_args)
+
+    # Get actual audio duration from transcription
+    import json
+    transcription_file_path = my_args.transcription_file + '.json' if not my_args.transcription_file.endswith('.json') else my_args.transcription_file
+
+    # Check if transcription file exists, if not try without .json extension
+    if not os.path.exists(transcription_file_path):
+        transcription_file_path = my_args.transcription_file
+
+    with open(transcription_file_path, 'r') as f:
+        transcription_data = json.load(f)
+
+    # Find the actual end time from transcription
+    actual_end_time = max(segment['end'] for segment in transcription_data)
+    print(f"Audio duration from transcription: {actual_end_time} seconds")
+    print(f"ViPE prompts end at: {lyric2prompt[-1]['end']} seconds")
+
+    # Extend the last prompt to cover the full audio duration
+    if lyric2prompt[-1]['end'] < actual_end_time:
+        gap_duration = actual_end_time - lyric2prompt[-1]['end']
+        print(f"Extending last prompt by {gap_duration} seconds to cover full audio")
+        lyric2prompt[-1]['end'] = actual_end_time
+
     torch.cuda.empty_cache()
     
     # Initialize logger
@@ -392,7 +416,7 @@ def main():
                                         success=False,
                                         error=e
                                     )
-                        #break  # This break should be removed - it exits after first character
+                        break
                         
                     elif user_input == 'skip':
                         print("Continuing without dreambooth...")
@@ -463,7 +487,7 @@ def main():
         # @markdown ####**Animation:**
 
         animation_mode = my_args.animation_mode  # @param ['None', '2D', '3D', 'Video Input', 'Interpolation'] {type:'string'}
-        max_frames = int(lyric2prompt[-1]['end']) * fps_p  # @param {type:"number"}
+        max_frames = math.ceil(lyric2prompt[-1]['end'] * fps_p)  # @param {type:"number"}
 
         border = 'wrap'  # @param ['wrap', 'replicate'] {type:'string'}
 
@@ -817,18 +841,13 @@ def main():
         cmd = [
             'ffmpeg',
             '-y',
-            '-vcodec', bitdepth_extension,
-            '-r', str(fps),
-            '-start_number', str(0),
+            '-framerate', str(fps),  # Use -framerate instead of -r for input
             '-i', image_path,
-            '-frames:v', max_frames,
+            '-frames:v', str(max_frames),
             '-c:v', 'libx264',
-            '-vf',
-            f'fps={fps}',
             '-pix_fmt', 'yuv420p',
             '-crf', '17',
             '-preset', 'veryfast',
-            '-pattern_type', 'sequence',
             mp4_path
         ]
 
