@@ -339,3 +339,85 @@ class VideoGenerationLogger:
         except Exception as e:
             self.log_error("run_summary", e)
             return None
+    
+    def log_frame_to_prompt_mapping(self, animation_prompts, max_frames, method="auto"):
+        """Log mapping of frames to prompts for evaluation - works for both AnimateDiff and old method"""
+        try:
+            mapping_data = {
+                "timestamp": self.timestamp,
+                "total_frames": max_frames,
+                "generation_method": method,
+                "frame_to_prompt_mapping": []
+            }
+            
+            if method == "animatediff":
+                # Use AnimateDiff extraction logic
+                from helpers.animatediff import _extract_lines_from_animation_prompts
+                lines = _extract_lines_from_animation_prompts(animation_prompts, max_frames)
+                
+                for i, line in enumerate(lines):
+                    mapping_entry = {
+                        "prompt_index": i,
+                        "text": line.get('prompt', ''),
+                        "prompt": line.get('prompt', ''),
+                        "start_frame": line['start_frame'],
+                        "end_frame": line['end_frame'] - 1,  # Make end_frame inclusive
+                        "frame_count": line['duration']
+                    }
+                    mapping_data["frame_to_prompt_mapping"].append(mapping_entry)
+                    
+            else:
+                # Use old method logic - animation_prompts is {frame_num: prompt_text}
+                # Convert to frame-by-frame mapping
+                frame_to_prompt = {}
+                
+                # Fill in the prompts for each frame
+                for frame_num, prompt_text in animation_prompts.items():
+                    frame_to_prompt[int(frame_num)] = prompt_text
+                
+                # Forward fill missing frames
+                current_prompt = None
+                for frame_idx in range(max_frames):
+                    if frame_idx in frame_to_prompt:
+                        current_prompt = frame_to_prompt[frame_idx]
+                    elif current_prompt is not None:
+                        frame_to_prompt[frame_idx] = current_prompt
+                
+                # Group consecutive frames with same prompt
+                current_frame = 0
+                prompt_index = 0
+                
+                while current_frame < max_frames:
+                    if current_frame not in frame_to_prompt:
+                        current_frame += 1
+                        continue
+                        
+                    current_prompt = frame_to_prompt[current_frame]
+                    start_frame = current_frame
+                    
+                    # Find end of this prompt
+                    while current_frame < max_frames and frame_to_prompt.get(current_frame) == current_prompt:
+                        current_frame += 1
+                    
+                    end_frame = current_frame - 1
+                    frame_count = end_frame - start_frame + 1
+                    
+                    mapping_entry = {
+                        "prompt_index": prompt_index,
+                        "text": current_prompt,
+                        "prompt": current_prompt,
+                        "start_frame": start_frame,
+                        "end_frame": end_frame,
+                        "frame_count": frame_count
+                    }
+                    mapping_data["frame_to_prompt_mapping"].append(mapping_entry)
+                    prompt_index += 1
+            
+            # Save the mapping
+            with open(os.path.join(self.run_dir, "frame_to_prompt_mapping.json"), 'w') as f:
+                json.dump(mapping_data, f, indent=2)
+            
+            print(f"Frame-to-prompt mapping logged to: {os.path.join(self.run_dir, 'frame_to_prompt_mapping.json')}")
+            
+        except Exception as e:
+            self.log_error("frame_to_prompt_mapping", e)
