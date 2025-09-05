@@ -128,9 +128,9 @@ def main():
     my_args.n_img_reward_samples = user_args.image_quality_number
     my_args.caption_mode = user_args.caption_mode  # set to None to skip adding lyrics, set to 'lyrics' to only add lyrics and 'both' to add both lyrics and prompts
     if skip_new:
-        my_args.postfix_prompts = ", wide shot, establishing shot, scenic view, immersive environment, background in focus, balanced framing"
-    else:
         my_args.postfix_prompts = ", extreme detail, high quality, HD, 32K, dramatic lighting, ultra-realistic, high detailed photography, vivid, vibrant, intricate, trending on artstation"
+    else:
+       my_args.postfix_prompts = " wide shot, establishing shot, scenic view, immersive environment, background in focus, balanced framing, " 
     my_args.prompt_file = '{}/{}_ctx_{}_sample_{}_vipe_{}_abst_{}_lyric2prompt'.format(mp3_dir, mp3_name,
                                                                                        my_args.context_size,
                                                                                        my_args.do_sample,
@@ -487,7 +487,10 @@ def main():
         # @markdown ####**Animation:**
 
         animation_mode = my_args.animation_mode  # @param ['None', '2D', '3D', 'Video Input', 'Interpolation'] {type:'string'}
-        max_frames = math.ceil(lyric2prompt[-1]['end'] * fps_p)  # @param {type:"number"}
+        # Calculate max_frames more precisely to match audio duration exactly
+        audio_duration = lyric2prompt[-1]['end']  # Use the extended prompt duration
+        max_frames = int(audio_duration * fps_p)  # Use int() instead of math.ceil() to avoid extra frames
+        print(f"Calculated max_frames: {max_frames} for audio duration: {audio_duration:.2f}s at {fps_p} fps")
 
         border = 'wrap'  # @param ['wrap', 'replicate'] {type:'string'}
 
@@ -838,18 +841,23 @@ def main():
                 max_frames = str(anim_args.max_frames)
 
         # make video
+        # Calculate precise duration to match audio
+        video_duration = lyric2prompt[-1]['end']
+        
         cmd = [
             'ffmpeg',
             '-y',
             '-framerate', str(fps),  # Use -framerate instead of -r for input
             '-i', image_path,
-            '-frames:v', str(max_frames),
+            '-t', str(video_duration),  # Use duration instead of frame count for more precise timing
             '-c:v', 'libx264',
             '-pix_fmt', 'yuv420p',
             '-crf', '17',
             '-preset', 'veryfast',
             mp4_path
         ]
+
+        print(f"Creating video with duration: {video_duration:.2f}s using {max_frames} frames at {fps} fps")
 
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         stdout, stderr = process.communicate()
@@ -877,6 +885,14 @@ def main():
         print(f"Run ID: {summary['run_id']}")
         print(f"Logs saved to: {summary['logs_directory']}")
         print(f"Files created: {len(summary['files_created'])}")
+
+    # Log frame-to-prompt mapping for evaluation
+    if skip_new:
+        # Old video generation method
+        logger.log_frame_to_prompt_mapping(animation_prompts, anim_args.max_frames, method="old")
+    else:
+        # AnimateDiff method
+        logger.log_frame_to_prompt_mapping(animation_prompts, anim_args.max_frames, method="animatediff")
 
 
 if __name__ == "__main__":

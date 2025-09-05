@@ -806,6 +806,22 @@ def add_audio_to_mp4(mp4_path, mp3_path, output_path):
     # Load the audio clip
     audio_clip = AudioFileClip(mp3_path)
 
+    # Get durations
+    video_duration = video_clip.duration
+    audio_duration = audio_clip.duration
+    
+    print(f"Video duration: {video_duration:.2f} seconds")
+    print(f"Audio duration: {audio_duration:.2f} seconds")
+    
+    # Trim video to match audio duration if video is longer
+    if video_duration > audio_duration:
+        print(f"Video is {video_duration - audio_duration:.2f} seconds longer than audio. Trimming video to match audio duration.")
+        video_clip = video_clip.subclipped(0, audio_duration)
+    # If audio is longer, trim audio to match video duration
+    elif audio_duration > video_duration:
+        print(f"Audio is {audio_duration - video_duration:.2f} seconds longer than video. Trimming audio to match video duration.")
+        audio_clip = audio_clip.subclipped(0, video_duration)
+
     # Set the audio of the video clip to the loaded audio clip
     video_clip = video_clip.with_audio(audio_clip)
 
@@ -814,7 +830,7 @@ def add_audio_to_mp4(mp4_path, mp3_path, output_path):
     audio_info = audio_clip.reader.infos
     audio_codec = audio_info.get("codec_name")
     audio_bitrate = audio_info.get("bit_rate")
-    print(audio_bitrate)
+    print(f"Audio bitrate: {audio_bitrate}")
     #  audio_bitrate=audio_bitrate,
 
     # # Calculate the video bitrate based on file size and duration

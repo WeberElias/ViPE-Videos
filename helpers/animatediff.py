@@ -24,10 +24,6 @@ def generate_animatediff_video(args, anim_args, animation_prompts, root, charact
     """
     # Configuration - ControlNet
     use_controlnet = False
-
-    # Configuration - use AnimateDiff-compatible frame counts
-    MAX_FRAMES_PER_SEGMENT = 64  # AnimateDiff max
-    MIN_FRAMES_PER_SEGMENT = 16  # AnimateDiff min (changed from 8)
     
     pipeline_type = "CONTROLNET" if use_controlnet else "REGULAR"
     print(f"=== ANIMATEDIFF {pipeline_type} VIDEO GENERATION ===")
@@ -44,10 +40,7 @@ def generate_animatediff_video(args, anim_args, animation_prompts, root, charact
         print(f"Prompt: {line['prompt']}")
         
         # Calculate how many frames to generate for this video segment
-        # Use the line duration but cap it for memory/quality reasons
-        frames_to_generate = min(line['duration'], MAX_FRAMES_PER_SEGMENT)
-        frames_to_generate = max(frames_to_generate, MIN_FRAMES_PER_SEGMENT)
-        
+        frames_to_generate = line['duration']        
         print(f"Generating {frames_to_generate} frames for this video segment...")
         
         try:
@@ -132,6 +125,7 @@ def _extract_lines_from_animation_prompts(animation_prompts, max_frames):
         List of line dictionaries with prompt, duration, characters
     """
     import pandas as pd
+    import numpy as np
     
     # Create frame-by-frame prompt series to understand timing
     prompt_series = pd.Series([np.nan for _ in range(max_frames)])
@@ -144,6 +138,9 @@ def _extract_lines_from_animation_prompts(animation_prompts, max_frames):
     current_prompt = None
     current_characters = None
     start_frame = 0
+    
+    print(f"\n=== ANIMATEDIFF FRAME EXTRACTION DEBUG ===")
+    print(f"Total frames to process: {max_frames}")
     
     for frame_idx in range(max_frames):
         frame_prompt_data = prompt_series[frame_idx]
@@ -158,14 +155,18 @@ def _extract_lines_from_animation_prompts(animation_prompts, max_frames):
         
         # Check if we moved to a new line/prompt
         if current_prompt is not None and prompt_text != current_prompt:
-            # Save the previous line
+            duration_frames = frame_idx - start_frame
+            duration_seconds = duration_frames / 15  # Assuming 15 fps
+            
             lines.append({
                 'prompt': current_prompt,
                 'characters': current_characters,
                 'start_frame': start_frame,
                 'end_frame': frame_idx,
-                'duration': frame_idx - start_frame
+                'duration': duration_frames
             })
+            
+            print(f"Line {len(lines)}: frames {start_frame}-{frame_idx}, duration: {duration_frames} frames ({duration_seconds:.2f}s)")
             start_frame = frame_idx
         
         current_prompt = prompt_text
@@ -173,13 +174,23 @@ def _extract_lines_from_animation_prompts(animation_prompts, max_frames):
     
     # Add the final line
     if current_prompt is not None:
+        duration_frames = max_frames - start_frame
+        duration_seconds = duration_frames / 15
+        
         lines.append({
             'prompt': current_prompt,
             'characters': current_characters,
             'start_frame': start_frame,
             'end_frame': max_frames,
-            'duration': max_frames - start_frame
+            'duration': duration_frames
         })
+        
+        print(f"Final line {len(lines)}: frames {start_frame}-{max_frames}, duration: {duration_frames} frames ({duration_seconds:.2f}s)")
+    
+    total_duration = sum(line['duration'] for line in lines)
+    print(f"Total frames across all lines: {total_duration}")
+    print(f"Expected total frames: {max_frames}")
+    print(f"=== END ANIMATEDIFF DEBUG ===\n")
     
     return lines
 
