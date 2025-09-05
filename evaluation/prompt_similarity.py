@@ -7,6 +7,9 @@ import numpy as np
 from torchmetrics.functional.multimodal import clip_score
 from functools import partial
 
+# Suppress the transformers processor warning
+warnings.filterwarnings("ignore", message=".*use_fast.*", category=UserWarning)
+
 IMAGE_DIR_PATH = "/graphics/scratch2/students/webereli/evaluation/2025-09/ViPE"
 IMAGE_STAMP_PREFIX ="20250904144032"
 FRAME_TO_PROMPT_MAPPING_PATH = "/graphics/scratch2/students/webereli/evaluation/frame_to_prompt_mapping.json"
