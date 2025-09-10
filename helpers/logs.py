@@ -45,7 +45,7 @@ class VideoGenerationLogger:
                     "skip_visual_effect": user_args.skip_visual_effect,
                     "animation_mode": user_args.animation_mode,
                     "disco_mode": user_args.disco_mode,
-                    "skip": user_args.skip
+                    "generation_mode": user_args.generation_mode
                 },
                 "processed_args": {
                     "device": my_args.device,

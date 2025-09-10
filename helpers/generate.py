@@ -12,6 +12,10 @@ from torch import autocast
 from contextlib import nullcontext
 from einops import rearrange, repeat
 
+# Add diffusers imports for simple pipeline
+from diffusers import StableDiffusionPipeline
+from peft import PeftModel
+
 from .prompt import get_uc_and_c
 from .k_samplers import sampler_fn, make_inject_timing_fn
 from scipy.ndimage import gaussian_filter
@@ -26,7 +30,105 @@ from .load_images import load_img, load_mask_latent, prepare_mask, prepare_overl
 def add_noise(sample: torch.Tensor, noise_amt: float) -> torch.Tensor:
     return sample + torch.randn(sample.shape, device=sample.device) * noise_amt
 
+def generate_simple_pipeline(args, root, frame=0, return_latent=False, return_sample=False, return_c=False):
+    """
+    Simple diffusers-based generation pipeline with DreamBooth LoRA support
+    """
+    seed_everything(args.seed)
+    os.makedirs(args.outdir, exist_ok=True)
+
+    # Use SD 1.5 based model (you can change this to match your needs)
+    model_id = "SG161222/Realistic_Vision_V5.1_noVAE"  # or "runwayml/stable-diffusion-v1-5"
+    
+    pipe = StableDiffusionPipeline.from_pretrained(
+        model_id,
+        torch_dtype=torch.float16,
+        safety_checker=None,
+        requires_safety_checker=False
+    ).to(root.device)
+    
+    # Apply LoRA if available and characters are present
+    if hasattr(root, 'characters') and root.characters:
+        # Get current characters from the prompt
+        current_characters = []
+        for character in root.characters:
+            if hasattr(character, 'unique_identifier') and character.unique_identifier.lower() in args.prompt.lower():
+                current_characters.append(character)
+        
+        if current_characters:
+            for character in current_characters:
+                if hasattr(character, 'model_path') and character.model_path and os.path.exists(character.model_path):
+                    try:
+                        print(f"Loading LoRA for character: {character.name}")
+                        pipe.unet = PeftModel.from_pretrained(pipe.unet, character.model_path)
+                        print(f"Successfully loaded LoRA from: {character.model_path}")
+                    except Exception as e:
+                        print(f"Failed to load LoRA for {character.name}: {e}")
+    
+    # Set progress bar
+    pipe.set_progress_bar_config(disable=True)
+    
+    # Set up generator for reproducibility
+    generator = torch.Generator(device=root.device).manual_seed(args.seed)
+    
+    # Create negative prompt if not provided
+    negative_prompt = getattr(args, 'negative_prompt', "bad quality, worse quality, low resolution, blurry")
+    
+    # Generate image
+    with torch.no_grad():
+        result = pipe(
+            prompt=args.prompt,
+            negative_prompt=negative_prompt,
+            height=args.H,
+            width=args.W,
+            num_inference_steps=args.steps,
+            guidance_scale=args.scale,
+            generator=generator,
+            num_images_per_prompt=args.n_samples
+        )
+    
+    # Convert results to match original format expectations
+    results = []
+    
+    for image in result.images:
+        # Convert PIL to format expected by the rest of the system
+        if args.bit_depth_output == 8:
+            processed_image = image  # PIL Image for 8-bit
+        elif args.bit_depth_output == 32:
+            image_array = np.array(image).astype(np.float32) / 255.0
+            processed_image = image_array
+        else:  # 16-bit
+            image_array = (np.array(image) * 256).astype(np.uint16)
+            processed_image = image_array
+        
+        results.append(processed_image)
+    
+    # Return format that matches what render.py expects
+    if return_sample and return_latent and return_c:
+        # Return [latent, sample, conditioning, image1, image2, ...]
+        return [None, None, None] + results  # Dummy values for latent, sample, c
+    elif return_sample and return_latent:
+        # Return [latent, sample, image1, image2, ...]
+        return [None, None] + results
+    elif return_sample:
+        # This is what render_animation expects: sample, image
+        return None, results[0] if results else None
+    elif return_latent:
+        # Return [latent, image1, image2, ...]
+        return [None] + results
+    elif return_c:
+        # Return [conditioning, image1, image2, ...]
+        return [None] + results
+    else:
+        # Just return the images
+        return results
+
 def generate(args, root, frame = 0, return_latent=False, return_sample=False, return_c=False):
+    # Route to simple pipeline if specified
+    if hasattr(args, 'use_simple_pipeline') and args.use_simple_pipeline:
+        return generate_simple_pipeline(args, root, frame, return_latent, return_sample, return_c)
+    
+    # Original complex pipeline
     seed_everything(args.seed)
     os.makedirs(args.outdir, exist_ok=True)
 

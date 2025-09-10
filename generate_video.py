@@ -88,8 +88,9 @@ def parse_args():
     parser.add_argument("--disco_mode", action="store_true", help="pass the flag to switch to disco mode")
     
     parser.add_argument(
-        "--skip", type=str, choices=["dreambooth", "new"], default=None,
-        help='Skip certain features: "dreambooth" to skip character generation and DreamBooth training, "new" to use old video generation method'
+        "--generation_mode", type=str, choices=["animatediff", "original", "animatediff_and_dreambooth", "dreambooth_only"], 
+        default="animatediff_and_dreambooth",
+        help='Video generation mode: "animatediff" uses AnimateDiff without DreamBooth, "original" uses old generation method, "animatediff_and_dreambooth" uses AnimateDiff with character generation and DreamBooth training (default), "dreambooth_only" uses simple diffusers pipeline with DreamBooth LoRA only'
     )
 
     user_args = parser.parse_args()
@@ -101,14 +102,19 @@ def main():
     user_args = parse_args()
     
     # Configuration flags based on command line arguments
-    skip_dreambooth = (user_args.skip == "dreambooth" or user_args.skip == "new")
-    skip_new = (user_args.skip == "new")
+    skip_dreambooth = (user_args.generation_mode == "animatediff" or user_args.generation_mode == "original")
+    skip_new = (user_args.generation_mode == "original")
+    use_simple_pipeline = (user_args.generation_mode == "dreambooth_only")
     
     # Print configuration
-    if skip_dreambooth:
-        print("Skipping character generation and DreamBooth")
-    if skip_new:
-        print("Using old video generation method and skipping character generation and Dreambooth")
+    if user_args.generation_mode == "animatediff":
+        print("Using AnimateDiff without character generation and DreamBooth")
+    elif user_args.generation_mode == "original":
+        print("Using original video generation method without character generation and DreamBooth")
+    elif user_args.generation_mode == "animatediff_and_dreambooth":
+        print("Using AnimateDiff with character generation and DreamBooth training")
+    elif user_args.generation_mode == "dreambooth_only":
+        print("Using simple diffusers pipeline with DreamBooth LoRA only")
 
     my_args = dotdict({})
     my_args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -188,14 +194,14 @@ def main():
     animation_prompts = {}
 
     # Character generation and DreamBooth training (skip if flags are set)
-    if skip_dreambooth:
+    if skip_dreambooth and not use_simple_pipeline:
         # Convert lyric2prompt to animation_prompts format without character processing
         # Use the ViPE-generated prompts, not the original text
         for i, entry in enumerate(lyric2prompt):
             frame_num = int(entry['start'] * fps_p)
             animation_prompts[frame_num] = entry['prompt']
     else:
-        # Generate characters and update prompts using Gemini
+        # Generate characters and update prompts using Gemini (for both animatediff_and_dreambooth and dreambooth_only modes)
         success = False
         characters_path = None
         
@@ -714,6 +720,9 @@ def main():
     args = SimpleNamespace(**args_dict)
     anim_args = SimpleNamespace(**anim_args_dict)
     
+    # Add the simple pipeline flag to args
+    args.use_simple_pipeline = use_simple_pipeline
+    
     # Log animation arguments
     logger.log_animation_args(args, anim_args)
     
@@ -723,6 +732,10 @@ def main():
         # Always load traditional model for old method
         print("Loading traditional Stable Diffusion model...")
         root.model, root.device = load_model(root, load_on_run_all=True, check_sha256=True, map_location=root.map_location)
+        use_animatediff = False
+    elif use_simple_pipeline:
+        print("Using simple diffusers pipeline - no traditional model loading needed")
+        root.model = None  # Simple pipeline doesn't use traditional model
         use_animatediff = False
     else:
         # Now decide whether to load the traditional model
@@ -767,7 +780,7 @@ def main():
 
     # dispatch to appropriate renderer
     if anim_args.animation_mode == '2D' or anim_args.animation_mode == '3D':
-        if not pass_render and not skip_new:
+        if not pass_render and not skip_new and not use_simple_pipeline:
             # Use AnimateDiff instead of traditional rendering
             print("Using AnimateDiff for video generation...")
             print(animation_prompts)
@@ -795,10 +808,14 @@ def main():
                     root.model, root.device = load_model(root, load_on_run_all=True, check_sha256=True, map_location=root.map_location)
                 render_animation(args, anim_args, animation_prompts, root)
         else:
-            # Traditional rendering - make sure model is loaded
-            if root.model is None:
-                print("Loading traditional model for rendering...")
-                root.model, root.device = load_model(root, load_on_run_all=True, check_sha256=True, map_location=root.map_location)
+            # Traditional rendering (or simple pipeline) - make sure model is loaded if needed
+            if use_simple_pipeline:
+                print("Using simple diffusers pipeline for rendering...")
+            else:
+                print("Using traditional rendering...")
+                if root.model is None:
+                    print("Loading traditional model for rendering...")
+                    root.model, root.device = load_model(root, load_on_run_all=True, check_sha256=True, map_location=root.map_location)
             render_animation(args, anim_args, animation_prompts, root)
     elif anim_args.animation_mode == 'Video Input':
         render_input_video(args, anim_args, animation_prompts, root)
