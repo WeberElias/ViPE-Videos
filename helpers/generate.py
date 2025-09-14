@@ -32,58 +32,62 @@ def add_noise(sample: torch.Tensor, noise_amt: float) -> torch.Tensor:
 
 def generate_simple_pipeline(args, root, frame=0, return_latent=False, return_sample=False, return_c=False):
     """
-    Simple diffusers-based generation pipeline with DreamBooth LoRA support
+    Simple diffusers-based generation pipeline
     """
-    seed_everything(args.seed)
-    os.makedirs(args.outdir, exist_ok=True)
-
-    # Use SD 1.5 based model (you can change this to match your needs)
-    model_id = "SG161222/Realistic_Vision_V5.1_noVAE"  # or "runwayml/stable-diffusion-v1-5"
-    
     pipe = StableDiffusionPipeline.from_pretrained(
-        model_id,
+        "SG161222/Realistic_Vision_V5.1_noVAE",
         torch_dtype=torch.float16,
         safety_checker=None,
         requires_safety_checker=False
     ).to(root.device)
     
-    # Apply LoRA if available and characters are present
-    if hasattr(root, 'characters') and root.characters:
+    # Apply LoRA for characters if available
+    if hasattr(root, 'characters'):
         # Get current characters from the prompt
         current_characters = []
         for character in root.characters:
-            if hasattr(character, 'unique_identifier') and character.unique_identifier.lower() in args.prompt.lower():
+            if character.unique_identifier.lower() in args.prompt.lower():
                 current_characters.append(character)
         
         if current_characters:
-            for character in current_characters:
-                if hasattr(character, 'model_path') and character.model_path and os.path.exists(character.model_path):
+            # Apply LoRA for characters that have trained models
+            characters_with_models = [
+                char for char in current_characters 
+                if hasattr(char, 'model_path') and char.model_path and os.path.exists(char.model_path)
+            ]
+            
+            if characters_with_models:
+                # Only apply the first character's LoRA to avoid conflicts
+                character = characters_with_models[0]
+                base_model_path = character.model_path
+                unet_path = os.path.join(base_model_path, "unet")
+                text_encoder_path = os.path.join(base_model_path, "text_encoder")
+                
+                # Apply UNet LoRA
+                if os.path.exists(unet_path):
                     try:
-                        print(f"Loading LoRA for character: {character.name}")
-                        pipe.unet = PeftModel.from_pretrained(pipe.unet, character.model_path)
-                        print(f"Successfully loaded LoRA from: {character.model_path}")
+                        pipe.unet = PeftModel.from_pretrained(pipe.unet, unet_path)
                     except Exception as e:
-                        print(f"Failed to load LoRA for {character.name}: {e}")
+                        print(f"Error applying UNet LoRA for {character.name}: {e}")
+                
+                # Apply Text Encoder LoRA
+                if os.path.exists(text_encoder_path):
+                    try:
+                        pipe.text_encoder = PeftModel.from_pretrained(pipe.text_encoder, text_encoder_path)
+                    except Exception as e:
+                        print(f"Error applying Text Encoder LoRA for {character.name}: {e}")
     
     # Set progress bar
     pipe.set_progress_bar_config(disable=True)
-    
-    # Set up generator for reproducibility
-    generator = torch.Generator(device=root.device).manual_seed(args.seed)
-    
-    # Create negative prompt if not provided
-    negative_prompt = getattr(args, 'negative_prompt', "bad quality, worse quality, low resolution, blurry")
     
     # Generate image
     with torch.no_grad():
         result = pipe(
             prompt=args.prompt,
-            negative_prompt=negative_prompt,
             height=args.H,
             width=args.W,
             num_inference_steps=args.steps,
             guidance_scale=args.scale,
-            generator=generator,
             num_images_per_prompt=args.n_samples
         )
     
@@ -122,6 +126,7 @@ def generate_simple_pipeline(args, root, frame=0, return_latent=False, return_sa
     else:
         # Just return the images
         return results
+    
 
 def generate(args, root, frame = 0, return_latent=False, return_sample=False, return_c=False):
     # Route to simple pipeline if specified
