@@ -70,6 +70,61 @@ def get_date_from_stamp(stamp, mp3_file):
     return None
 
 
+def setup_character_files(mp3_file, character_id):
+    """
+    Move character-specific files before generation
+    
+    Args:
+        mp3_file: Name of the mp3 file (without extension)
+        character_id: Character identifier (character_1, character_2, etc.)
+    """
+    print(f"Setting up files for {character_id}")
+    
+    # Source directories
+    character_dir = f"/home/webereli/ViPE-Videos/evaluation/character_specific_files/{character_id}"
+    models_source = os.path.join(character_dir, "models")
+    
+    # Destination directories
+    mp3_dest_dir = "/home/webereli/ViPE-Videos/mp3"
+    models_dest_dir = f"/graphics/scratch2/students/webereli/{mp3_file}/models"
+    
+    # File names to move
+    json_files = [
+        f"{mp3_file}_ctx_1_sample_True_vipe_True_abst_0_characters.json",
+        f"{mp3_file}_ctx_1_sample_True_vipe_True_abst_0_with_characters.json"
+    ]
+    
+    # Move JSON files
+    for json_file in json_files:
+        source_path = os.path.join(character_dir, json_file)
+        dest_path = os.path.join(mp3_dest_dir, json_file)
+        
+        if os.path.exists(source_path):
+            print(f"Moving {source_path} to {dest_path}")
+            # Create destination directory if it doesn't exist
+            os.makedirs(mp3_dest_dir, exist_ok=True)
+            shutil.copy2(source_path, dest_path)
+        else:
+            print(f"Warning: JSON file not found: {source_path}")
+    
+    # Move models directory
+    if os.path.exists(models_source):
+        print(f"Moving models from {models_source} to {models_dest_dir}")
+        # Create parent directory if it doesn't exist
+        os.makedirs(os.path.dirname(models_dest_dir), exist_ok=True)
+        
+        # Remove existing models directory if it exists
+        if os.path.exists(models_dest_dir):
+            shutil.rmtree(models_dest_dir)
+        
+        # Copy the models directory
+        shutil.copytree(models_source, models_dest_dir)
+    else:
+        print(f"Warning: Models directory not found: {models_source}")
+    
+    print(f"Character {character_id} setup completed")
+
+
 def run_generate_video(saving_dir, mp3_file, generation_mode=None, additional_args=""):
     """Run generate_video.py with specified parameters"""
     # Get the directory where this script is located
@@ -81,7 +136,7 @@ def run_generate_video(saving_dir, mp3_file, generation_mode=None, additional_ar
            "--saving_dir", saving_dir,
            "--mp3_file", mp3_file,
            "--caption_mode", "both"]
-    
+        
     if generation_mode:
         cmd.extend(["--generation_mode", generation_mode])
     
@@ -91,9 +146,14 @@ def run_generate_video(saving_dir, mp3_file, generation_mode=None, additional_ar
     
     print(f"Running command: {' '.join(cmd)}")
     
+    # Change to the generate_video.py directory to ensure proper imports
+    original_cwd = os.getcwd()
+    target_cwd = os.path.dirname(generate_video_path)
+    
     try:
-        # Run the command and capture output
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        # Run the command and capture output from the correct directory
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, 
+                              cwd=target_cwd)
         return result.stdout, result.stderr, True
     except subprocess.CalledProcessError as e:
         print(f"Error running generate_video.py: {e}")
@@ -173,17 +233,41 @@ def main():
     
     # List of runs to perform
     runs = [
-        {"name": "original_generation", "generation_mode": "original", "description": "Original video generation method"},
-        {"name": "animatediff_only", "generation_mode": "animatediff", "description": "AnimateDiff without DreamBooth"},
-        {"name": "dreambooth_only", "generation_mode": "dreambooth_only", "description": "Simple diffusers pipeline with DreamBooth LoRA only"},
-        {"name": "animatediff_and_dreambooth", "generation_mode": "animatediff_and_dreambooth", "description": "Full generation with AnimateDiff and DreamBooth"}
+        {"name": "original_generation", "generation_mode": "original", "description": "Original video generation method", "character": None},
+        {"name": "animatediff_only", "generation_mode": "animatediff", "description": "AnimateDiff without DreamBooth", "character": None}
     ]
+    
+    # Add character-specific runs for dreambooth_only and animatediff_and_dreambooth
+    for character_num in range(1, 6):  # character_1 to character_5
+        character_id = f"character_{character_num}"
+        
+        # Add dreambooth_only run for this character
+        runs.append({
+            "name": f"dreambooth_only_{character_id}",
+            "generation_mode": "dreambooth_only",
+            "description": f"Simple diffusers pipeline with DreamBooth LoRA only - {character_id}",
+            "character": character_id
+        })
+        
+        # Add animatediff_and_dreambooth run for this character
+        runs.append({
+            "name": f"animatediff_and_dreambooth_{character_id}",
+            "generation_mode": "animatediff_and_dreambooth", 
+            "description": f"Full generation with AnimateDiff and DreamBooth - {character_id}",
+            "character": character_id
+        })
     
     for run_config in runs:
         print(f"\n{'='*60}")
         print(f"Starting run: {run_config['name']}")
         print(f"Description: {run_config['description']}")
+        if run_config.get('character'):
+            print(f"Character: {run_config['character']}")
         print(f"{'='*60}")
+        
+        # Setup character files if needed
+        if run_config.get('character'):
+            setup_character_files(args.mp3_file, run_config['character'])
         
         # Run generate_video.py
         stdout, stderr, success = run_generate_video(
@@ -195,24 +279,32 @@ def main():
         
         if not success:
             print(f"Failed to generate video for run: {run_config['name']}")
-            summary["runs"].append({
+            run_summary = {
                 "name": run_config["name"],
                 "generation_mode": run_config["generation_mode"],
                 "success": False,
-                "error": "Video generation failed"
-            })
+                "error": "Video generation failed",
+                "description": run_config["description"]
+            }
+            if run_config.get('character'):
+                run_summary["character"] = run_config["character"]
+            summary["runs"].append(run_summary)
             continue
         
         # Extract logs directory
         logs_dir = extract_logs_directory(stdout)
         if not logs_dir:
             print(f"Warning: Could not extract logs directory from output")
-            summary["runs"].append({
+            run_summary = {
                 "name": run_config["name"],
                 "generation_mode": run_config["generation_mode"],
                 "success": False,
-                "error": "Could not extract logs directory"
-            })
+                "error": "Could not extract logs directory",
+                "description": run_config["description"]
+            }
+            if run_config.get('character'):
+                run_summary["character"] = run_config["character"]
+            summary["runs"].append(run_summary)
             continue
         
         # Extract stamp
@@ -224,14 +316,17 @@ def main():
         move_success = move_files(args.saving_dir, args.mp3_file, stamp, logs_base_dir)
         
         # Record in summary
-        summary["runs"].append({
+        run_summary = {
             "name": run_config["name"],
             "generation_mode": run_config["generation_mode"],
             "stamp": stamp,
             "logs_directory": logs_dir,
             "success": success and move_success,
             "description": run_config["description"]
-        })
+        }
+        if run_config.get('character'):
+            run_summary["character"] = run_config["character"]
+        summary["runs"].append(run_summary)
         
         print(f"Completed run: {run_config['name']} with stamp: {stamp}")
     
@@ -248,7 +343,8 @@ def main():
     for run in summary["runs"]:
         status = "✓" if run["success"] else "✗"
         mode_info = f"--generation_mode {run['generation_mode']}" if run["generation_mode"] else "default mode"
-        print(f"{status} {run['name']}: {mode_info} -> {run.get('stamp', 'N/A')}")
+        character_info = f" (Character: {run['character']})" if run.get('character') else ""
+        print(f"{status} {run['name']}: {mode_info}{character_info} -> {run.get('stamp', 'N/A')}")
     
     print(f"\nAll generated files have been organized in: {logs_base_dir}")
 
