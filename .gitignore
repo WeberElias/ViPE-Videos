@@ -161,3 +161,7 @@ cython_debug/
 
 # Audiofiles, transcriptions and interpretations
 mp3/
+
+# Evaluation data
+evaluation/character_specific_files
+evaluation/training_img
