@@ -93,7 +93,7 @@ def generate_test_configurations():
         'num_class_images': [50, 100, 200, 400, 600, 800],
         'max_train_steps': [200, 400, 1200, 1600],
         'learning_rate': [5e-5, 1e-4, 5e-4, 1e-3],
-        'lora_r': [8, 32, 64],
+        'lora_r': [8, 16, 32, 64],
         'prior_loss_weight': [0.1, 0.5, 2.0, 5.0],
     }
     
