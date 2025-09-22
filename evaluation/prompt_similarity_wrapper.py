@@ -15,8 +15,8 @@ def load_generation_summary(summary_file):
         return json.load(f)
 
 def filter_relevant_runs(generation_data):
-    """Filter runs for dreambooth_only and animatediff_and_dreambooth modes with success=true"""
-    relevant_modes = ["dreambooth_only", "animatediff_and_dreambooth"]
+    """Filter runs for all generation modes with success=true"""
+    relevant_modes = ["dreambooth_only", "animatediff_and_dreambooth", "animatediff", "original"]
     relevant_runs = []
     
     for run in generation_data.get("runs", []):
@@ -25,6 +25,27 @@ def filter_relevant_runs(generation_data):
             relevant_runs.append(run)
     
     return relevant_runs
+
+def load_existing_combined_summary(output_file):
+    """Load existing combined summary file if it exists"""
+    if os.path.exists(output_file):
+        with open(output_file, 'r') as f:
+            return json.load(f)
+    return None
+
+def get_already_evaluated_stamps(existing_summary):
+    """Get list of stamps that have already been evaluated"""
+    if not existing_summary:
+        return set()
+    
+    evaluated_stamps = set()
+    for finding in existing_summary.get("individual_run_findings", []):
+        if finding and "run_info" in finding:
+            stamp = finding["run_info"].get("stamp")
+            if stamp:
+                evaluated_stamps.add(stamp)
+    
+    return evaluated_stamps
 
 def run_prompt_similarity_evaluation(stamp, method="both"):
     """Run the prompt similarity evaluation for a given stamp"""
@@ -52,8 +73,11 @@ def run_prompt_similarity_evaluation(stamp, method="both"):
         
         print(f"Successfully completed evaluation for {stamp}")
         
-        # Load the results
-        results_file = f"/graphics/scratch2/students/webereli/apt/logs/{stamp}/prompt_similarity_results.json"
+        # Extract the prefix from the stamp (e.g., "jump" from "jump_20250917_013158")
+        stamp_prefix = stamp.split('_')[0]
+        
+        # Load the results using the dynamic prefix
+        results_file = f"/graphics/scratch2/students/webereli/{stamp_prefix}/logs/{stamp}/prompt_similarity_results.json"
         if os.path.exists(results_file):
             with open(results_file, 'r') as f:
                 return json.load(f)
@@ -86,13 +110,43 @@ def extract_key_findings(evaluation_results, run_info):
     
     return enhanced_findings
 
-def create_combined_summary(all_findings, generation_data, output_dir):
+def merge_findings(existing_findings, new_findings):
+    """Merge new findings with existing findings, avoiding duplicates"""
+    if not existing_findings:
+        return new_findings
+    
+    # Create a set of existing stamps for quick lookup
+    existing_stamps = set()
+    for finding in existing_findings:
+        if finding and "run_info" in finding:
+            stamp = finding["run_info"].get("stamp")
+            if stamp:
+                existing_stamps.add(stamp)
+    
+    # Add only new findings that don't already exist
+    merged_findings = existing_findings.copy()
+    for finding in new_findings:
+        if finding and "run_info" in finding:
+            stamp = finding["run_info"].get("stamp")
+            if stamp and stamp not in existing_stamps:
+                merged_findings.append(finding)
+    
+    return merged_findings
+
+def create_combined_summary(all_findings, generation_data, output_dir, existing_summary=None):
     """Create a combined summary of all key findings"""
+    
+    # If we have an existing summary, merge the findings
+    if existing_summary:
+        existing_findings = existing_summary.get("individual_run_findings", [])
+        all_findings = merge_findings(existing_findings, all_findings)
     
     # Group findings by generation mode
     grouped_findings = {
         "dreambooth_only": [],
-        "animatediff_and_dreambooth": []
+        "animatediff_and_dreambooth": [],
+        "animatediff": [],
+        "original": []
     }
     
     for finding in all_findings:
@@ -105,6 +159,20 @@ def create_combined_summary(all_findings, generation_data, output_dir):
     mode_averages = {}
     for mode, findings in grouped_findings.items():
         if not findings:
+            mode_averages[mode] = {
+                "total_runs": 0,
+                "valid_runs": 0,
+                "all_frames_method": {
+                    "average_original_score": None,
+                    "average_cleaned_score": None,
+                    "average_difference": None
+                },
+                "median_frame_method": {
+                    "average_original_score": None,
+                    "average_cleaned_score": None,
+                    "average_difference": None
+                }
+            }
             continue
             
         all_frames_scores = {
@@ -156,9 +224,10 @@ def create_combined_summary(all_findings, generation_data, output_dir):
     combined_summary = {
         "evaluation_metadata": {
             "generated_at": datetime.now().isoformat(),
+            "last_updated": datetime.now().isoformat(),
             "mp3_file": generation_data.get("mp3_file"),
             "total_runs_evaluated": len(all_findings),
-            "evaluation_modes": ["dreambooth_only", "animatediff_and_dreambooth"]
+            "evaluation_modes": ["dreambooth_only", "animatediff_and_dreambooth", "animatediff", "original"]
         },
         "mode_averages": mode_averages,
         "individual_run_findings": all_findings
@@ -185,7 +254,7 @@ def print_summary_report(combined_summary):
     metadata = combined_summary["evaluation_metadata"]
     print(f"MP3 File: {metadata['mp3_file']}")
     print(f"Total Runs Evaluated: {metadata['total_runs_evaluated']}")
-    print(f"Generated: {metadata['generated_at']}")
+    print(f"Last Updated: {metadata['last_updated']}")
     
     mode_averages = combined_summary["mode_averages"]
     
@@ -205,36 +274,45 @@ def print_summary_report(combined_summary):
             print(f"    Average Original Score:  {averages['median_frame_method']['average_original_score']:.4f}")
             print(f"    Average Cleaned Score:   {averages['median_frame_method']['average_cleaned_score']:.4f}")
             print(f"    Average Difference:      {averages['median_frame_method']['average_difference']:.4f}")
+        else:
+            print("  No valid evaluations for this mode")
     
     print("\nINDIVIDUAL RUN RESULTS:")
     print("-" * 40)
     
-    for finding in combined_summary["individual_run_findings"]:
-        if finding:
-            run_info = finding["run_info"]
-            kf = finding["key_findings"]
-            
-            print(f"\n{run_info['name']} ({run_info['generation_mode']}):")
-            print(f"  Character: {run_info['character']}")
-            print(f"  Stamp: {run_info['stamp']}")
-            
-            # All frames results
-            all_frames = kf.get("all_frames_method", {})
-            if all_frames.get("original_average_clip_score") is not None:
-                print(f"  All Frames - Original: {all_frames['original_average_clip_score']:.4f}, Cleaned: {all_frames['cleaned_average_clip_score']:.4f}, Diff: {all_frames['average_score_difference']:.4f}")
-            
-            # Median frame results
-            median_frames = kf.get("median_frame_method", {})
-            if median_frames.get("original_average_clip_score") is not None:
-                print(f"  Median Frame - Original: {median_frames['original_average_clip_score']:.4f}, Cleaned: {median_frames['cleaned_average_clip_score']:.4f}, Diff: {median_frames['average_score_difference']:.4f}")
+    # Group by generation mode for better organization
+    for mode in ["dreambooth_only", "animatediff_and_dreambooth", "animatediff", "original"]:
+        mode_findings = [f for f in combined_summary["individual_run_findings"] 
+                        if f and f.get("run_info", {}).get("generation_mode") == mode]
+        
+        if mode_findings:
+            print(f"\n{mode.upper().replace('_', ' ')}:")
+            for finding in mode_findings:
+                run_info = finding["run_info"]
+                kf = finding["key_findings"]
+                
+                print(f"  {run_info['name']}:")
+                print(f"    Character: {run_info['character']}")
+                print(f"    Stamp: {run_info['stamp']}")
+                
+                # All frames results
+                all_frames = kf.get("all_frames_method", {})
+                if all_frames.get("original_average_clip_score") is not None:
+                    print(f"    All Frames - Original: {all_frames['original_average_clip_score']:.4f}, Cleaned: {all_frames['cleaned_average_clip_score']:.4f}, Diff: {all_frames['average_score_difference']:.4f}")
+                
+                # Median frame results
+                median_frames = kf.get("median_frame_method", {})
+                if median_frames.get("original_average_clip_score") is not None:
+                    print(f"    Median Frame - Original: {median_frames['original_average_clip_score']:.4f}, Cleaned: {median_frames['cleaned_average_clip_score']:.4f}, Diff: {median_frames['average_score_difference']:.4f}")
 
 def main():
     """Main function to run prompt similarity evaluation for all relevant runs"""
-    parser = argparse.ArgumentParser(description='Run prompt similarity evaluation for all relevant generation runs')
+    parser = argparse.ArgumentParser(description='Run prompt similarity evaluation for all relevant generation runs (incremental)')
     parser.add_argument('--summary-file', required=True, help='Path to generation summary JSON file (e.g., apt_generation_summary.json)')
     parser.add_argument('--method', choices=['all', 'median', 'both'], default='both',
                       help='Method to use for evaluation: all (all frames), median (median frame), or both')
     parser.add_argument('--output-dir', help='Output directory for combined summary (default: same directory as summary file)')
+    parser.add_argument('--force-rerun', action='store_true', help='Force re-evaluation of all runs, even if already evaluated')
     
     args = parser.parse_args()
     
@@ -243,9 +321,9 @@ def main():
         print(f"Loading generation summary from: {args.summary_file}")
         generation_data = load_generation_summary(args.summary_file)
         
-        # Filter relevant runs
+        # Filter relevant runs (now includes all 4 modes)
         relevant_runs = filter_relevant_runs(generation_data)
-        print(f"Found {len(relevant_runs)} relevant runs (dreambooth_only or animatediff_and_dreambooth with success=true)")
+        print(f"Found {len(relevant_runs)} relevant runs (all generation modes with success=true)")
         
         if not relevant_runs:
             print("No relevant runs found. Exiting.")
@@ -254,13 +332,40 @@ def main():
         # Set output directory
         output_dir = args.output_dir if args.output_dir else os.path.dirname(os.path.abspath(args.summary_file))
         
-        # Run evaluation for each relevant run
+        # Check for existing combined summary
+        mp3_file = generation_data.get("mp3_file", "unknown")
+        combined_summary_file = os.path.join(output_dir, f"{mp3_file}_combined_prompt_similarity_summary.json")
+        existing_summary = load_existing_combined_summary(combined_summary_file)
+        
+        if existing_summary:
+            print(f"Found existing combined summary at: {combined_summary_file}")
+            already_evaluated = get_already_evaluated_stamps(existing_summary)
+            print(f"Already evaluated stamps: {len(already_evaluated)}")
+        else:
+            print("No existing combined summary found. Will evaluate all runs.")
+            already_evaluated = set()
+        
+        # Determine which runs need to be evaluated
+        if args.force_rerun:
+            runs_to_evaluate = relevant_runs
+            print("Force rerun enabled. Will evaluate all runs.")
+        else:
+            runs_to_evaluate = [run for run in relevant_runs if run["stamp"] not in already_evaluated]
+            print(f"Runs needing evaluation: {len(runs_to_evaluate)}")
+        
+        if not runs_to_evaluate:
+            print("All runs have already been evaluated. Use --force-rerun to re-evaluate.")
+            if existing_summary:
+                print_summary_report(existing_summary)
+            return
+        
+        # Run evaluation for each run that needs it
         all_findings = []
         successful_runs = 0
         
-        for i, run in enumerate(relevant_runs, 1):
+        for i, run in enumerate(runs_to_evaluate, 1):
             stamp = run["stamp"]
-            print(f"\nProcessing run {i}/{len(relevant_runs)}: {run['name']} ({stamp})")
+            print(f"\nProcessing run {i}/{len(runs_to_evaluate)}: {run['name']} ({stamp})")
             
             # Run the evaluation
             evaluation_results = run_prompt_similarity_evaluation(stamp, args.method)
@@ -277,14 +382,16 @@ def main():
         print(f"\n{'='*60}")
         print(f"EVALUATION COMPLETED")
         print(f"{'='*60}")
-        print(f"Total runs processed: {len(relevant_runs)}")
-        print(f"Successful evaluations: {successful_runs}")
-        print(f"Failed evaluations: {len(relevant_runs) - successful_runs}")
+        print(f"New runs processed: {len(runs_to_evaluate)}")
+        print(f"Successful new evaluations: {successful_runs}")
+        print(f"Failed new evaluations: {len(runs_to_evaluate) - successful_runs}")
         
-        # Create combined summary
-        if successful_runs > 0:
-            print(f"\nCreating combined summary...")
-            combined_summary, summary_file = create_combined_summary(all_findings, generation_data, output_dir)
+        # Create combined summary (merging with existing if present)
+        if successful_runs > 0 or existing_summary:
+            print(f"\nCreating/updating combined summary...")
+            combined_summary, summary_file = create_combined_summary(
+                all_findings, generation_data, output_dir, existing_summary
+            )
             
             print(f"Combined summary saved to: {summary_file}")
             
@@ -292,7 +399,7 @@ def main():
             print_summary_report(combined_summary)
             
         else:
-            print("No successful evaluations to summarize.")
+            print("No successful evaluations and no existing summary to update.")
         
     except Exception as e:
         print(f"Error: {e}")

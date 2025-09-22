@@ -109,7 +109,10 @@ def calculate_dual_clip_scores(images, original_prompt, cleaned_prompt, model, p
 
 def find_directories(stamp):
     """Find the image directory and frame mapping file based on the stamp"""
-    base_path = f"/graphics/scratch2/students/webereli/apt/logs/{stamp}"
+    # Extract the prefix from the stamp (e.g., "jump" from "jump_20250915_074937")
+    stamp_prefix = stamp.split('_')[0]
+    
+    base_path = f"/graphics/scratch2/students/webereli/{stamp_prefix}/logs/{stamp}"
     
     if not os.path.exists(base_path):
         raise ValueError(f"Base path does not exist: {base_path}")
@@ -474,7 +477,10 @@ def calculate_dual_statistics(results, method_name):
 
 def save_results(all_frames_results, median_results, all_frames_stats, median_stats, stamp):
     """Save all results to a single JSON file with summary at the top"""
-    base_path = f"/graphics/scratch2/students/webereli/apt/logs/{stamp}"
+    # Extract the prefix from the stamp (e.g., "jump" from "jump_20250915_074937")
+    stamp_prefix = stamp.split('_')[0]
+    
+    base_path = f"/graphics/scratch2/students/webereli/{stamp_prefix}/logs/{stamp}"
     
     # Create summary with most relevant values at the top
     summary = {
@@ -634,7 +640,8 @@ def main():
             print(f"\nResults saved to: {output_file}")
         elif all_frames_results:
             # Save only all frames results
-            base_path = f"/graphics/scratch2/students/webereli/apt/logs/{stamp}"
+            stamp_prefix = stamp.split('_')[0]
+            base_path = f"/graphics/scratch2/students/webereli/{stamp_prefix}/logs/{stamp}"
             output_file = os.path.join(base_path, "prompt_similarity_all_frames_dual.json")
             os.makedirs(os.path.dirname(output_file), exist_ok=True)
             with open(output_file, 'w') as f:
@@ -645,7 +652,8 @@ def main():
             print(f"\nResults saved to: {output_file}")
         elif median_results:
             # Save only median results
-            base_path = f"/graphics/scratch2/students/webereli/apt/logs/{stamp}"
+            stamp_prefix = stamp.split('_')[0]
+            base_path = f"/graphics/scratch2/students/webereli/{stamp_prefix}/logs/{stamp}"
             output_file = os.path.join(base_path, "prompt_similarity_median_frame_dual.json")
             os.makedirs(os.path.dirname(output_file), exist_ok=True)
             with open(output_file, 'w') as f:
