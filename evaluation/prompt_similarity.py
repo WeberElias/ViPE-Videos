@@ -431,25 +431,55 @@ def calculate_dual_statistics(results, method_name):
                 "average_clip_score": None,
                 "min_clip_score": None,
                 "max_clip_score": None,
-                "std_clip_score": None
+                "std_clip_score": None,
+                "q1_lower_quartile": None,
+                "q2_median": None,
+                "q3_upper_quartile": None
             },
             "cleaned_stats": {
                 "average_clip_score": None,
                 "min_clip_score": None,
                 "max_clip_score": None,
-                "std_clip_score": None
+                "std_clip_score": None,
+                "q1_lower_quartile": None,
+                "q2_median": None,
+                "q3_upper_quartile": None
             },
             "difference_stats": {
                 "average_difference": None,
                 "min_difference": None,
                 "max_difference": None,
-                "std_difference": None
+                "std_difference": None,
+                "q1_lower_quartile": None,
+                "q2_median": None,
+                "q3_upper_quartile": None
             }
         }
     
     original_scores = [r["original_clip_score"] for r in valid_results]
     cleaned_scores = [r["cleaned_clip_score"] for r in valid_results]
     differences = [r["score_difference"] for r in valid_results]
+    
+    # Calculate quartiles for original scores
+    sorted_original = sorted(original_scores)
+    n_orig = len(sorted_original)
+    orig_q1 = sorted_original[int(n_orig * 0.25)] if n_orig > 0 else None
+    orig_q2 = sorted_original[int(n_orig * 0.5)] if n_orig > 0 else None
+    orig_q3 = sorted_original[int(n_orig * 0.75)] if n_orig > 0 else None
+    
+    # Calculate quartiles for cleaned scores
+    sorted_cleaned = sorted(cleaned_scores)
+    n_clean = len(sorted_cleaned)
+    clean_q1 = sorted_cleaned[int(n_clean * 0.25)] if n_clean > 0 else None
+    clean_q2 = sorted_cleaned[int(n_clean * 0.5)] if n_clean > 0 else None
+    clean_q3 = sorted_cleaned[int(n_clean * 0.75)] if n_clean > 0 else None
+    
+    # Calculate quartiles for differences
+    sorted_diff = sorted(differences)
+    n_diff = len(sorted_diff)
+    diff_q1 = sorted_diff[int(n_diff * 0.25)] if n_diff > 0 else None
+    diff_q2 = sorted_diff[int(n_diff * 0.5)] if n_diff > 0 else None
+    diff_q3 = sorted_diff[int(n_diff * 0.75)] if n_diff > 0 else None
     
     return {
         "method": method_name,
@@ -459,19 +489,28 @@ def calculate_dual_statistics(results, method_name):
             "average_clip_score": round(np.mean(original_scores), 4),
             "min_clip_score": round(min(original_scores), 4),
             "max_clip_score": round(max(original_scores), 4),
-            "std_clip_score": round(np.std(original_scores), 4)
+            "std_clip_score": round(np.std(original_scores), 4),
+            "q1_lower_quartile": round(orig_q1, 4) if orig_q1 is not None else None,
+            "q2_median": round(orig_q2, 4) if orig_q2 is not None else None,
+            "q3_upper_quartile": round(orig_q3, 4) if orig_q3 is not None else None
         },
         "cleaned_stats": {
             "average_clip_score": round(np.mean(cleaned_scores), 4),
             "min_clip_score": round(min(cleaned_scores), 4),
             "max_clip_score": round(max(cleaned_scores), 4),
-            "std_clip_score": round(np.std(cleaned_scores), 4)
+            "std_clip_score": round(np.std(cleaned_scores), 4),
+            "q1_lower_quartile": round(clean_q1, 4) if clean_q1 is not None else None,
+            "q2_median": round(clean_q2, 4) if clean_q2 is not None else None,
+            "q3_upper_quartile": round(clean_q3, 4) if clean_q3 is not None else None
         },
         "difference_stats": {
             "average_difference": round(np.mean(differences), 4),
             "min_difference": round(min(differences), 4),
             "max_difference": round(max(differences), 4),
-            "std_difference": round(np.std(differences), 4)
+            "std_difference": round(np.std(differences), 4),
+            "q1_lower_quartile": round(diff_q1, 4) if diff_q1 is not None else None,
+            "q2_median": round(diff_q2, 4) if diff_q2 is not None else None,
+            "q3_upper_quartile": round(diff_q3, 4) if diff_q3 is not None else None
         }
     }
 
@@ -544,15 +583,87 @@ def save_results(all_frames_results, median_results, all_frames_stats, median_st
     
     return output_file
 
+def update_existing_results_with_quartiles(stamp):
+    """Update existing prompt similarity results to include quartiles without recalculating everything"""
+    stamp_prefix = stamp.split('_')[0]
+    base_path = f"/graphics/scratch2/students/webereli/{stamp_prefix}/logs/{stamp}"
+    results_file = os.path.join(base_path, "prompt_similarity_results.json")
+    
+    if not os.path.exists(results_file):
+        print(f"No existing results file found at {results_file}")
+        return False
+    
+    try:
+        # Load existing results
+        with open(results_file, 'r') as f:
+            existing_data = json.load(f)
+        
+        print(f"Updating existing results with quartiles for {stamp}...")
+        
+        # Check if quartiles already exist
+        detailed_stats = existing_data.get("detailed_statistics", {})
+        all_frames_stats = detailed_stats.get("all_frames_method", {})
+        
+        if (all_frames_stats.get("original_stats", {}).get("q1_lower_quartile") is not None):
+            print(f"Quartiles already exist for {stamp}, skipping update.")
+            return True
+        
+        # Get detailed results to recalculate statistics with quartiles
+        detailed_results = existing_data.get("detailed_results", {})
+        all_frames_results = detailed_results.get("all_frames_method", [])
+        median_results = detailed_results.get("median_frame_method", [])
+        
+        # Recalculate statistics with quartiles
+        updated_all_frames_stats = calculate_dual_statistics(all_frames_results, "all_frames_normalized_dual") if all_frames_results else None
+        updated_median_stats = calculate_dual_statistics(median_results, "median_frame_dual") if median_results else None
+        
+        # Update the data structure
+        if updated_all_frames_stats:
+            existing_data["detailed_statistics"]["all_frames_method"] = updated_all_frames_stats
+            # Also update evaluation summary key findings
+            if "evaluation_summary" in existing_data and "key_findings" in existing_data["evaluation_summary"]:
+                kf = existing_data["evaluation_summary"]["key_findings"]
+                if "all_frames_method" in kf:
+                    # Keep existing values, just don't overwrite
+                    pass
+        
+        if updated_median_stats:
+            existing_data["detailed_statistics"]["median_frame_method"] = updated_median_stats
+        
+        # Save updated results
+        with open(results_file, 'w') as f:
+            json.dump(existing_data, f, indent=2)
+        
+        print(f"Successfully updated {results_file} with quartiles")
+        return True
+        
+    except Exception as e:
+        print(f"Error updating results with quartiles for {stamp}: {e}")
+        return False
+
 def main():
     """Main function to calculate prompt similarity using both methods with dual comparison"""
     parser = argparse.ArgumentParser(description='Calculate prompt similarity using CLIP scores (dual version: with and without unique identifiers)')
     parser.add_argument('--stamp', required=True, help='Timestamp stamp like "apt_20250916_160720"')
     parser.add_argument('--method', choices=['all', 'median', 'both'], default='both',
                       help='Method to use: all (all frames), median (median frame), or both')
+    parser.add_argument('--force_rerun', action='store_true',
+                      help='Force a complete rerun even if results already exist')
+    parser.add_argument('--update-quartiles-only', action='store_true', 
+                      help='Only update existing results with quartiles, do not recalculate')
     
     args = parser.parse_args()
     stamp = args.stamp
+    
+    # If only updating quartiles, do that and exit
+    if args.update_quartiles_only:
+        success = update_existing_results_with_quartiles(stamp)
+        if success:
+            print("Quartiles update completed successfully!")
+            return {"update_only": True, "success": True}
+        else:
+            print("Failed to update quartiles.")
+            return {"update_only": True, "success": False}
     
     try:
         print(f"Processing stamp: {stamp}")
@@ -662,6 +773,10 @@ def main():
                     "detailed_results": median_results
                 }, f, indent=2)
             print(f"\nResults saved to: {output_file}")
+        
+        # Update existing results with quartiles if they don't have them
+        if not args.force_rerun:  # Only if not forcing a complete rerun
+            update_existing_results_with_quartiles(stamp)
         
         print(f"\nProcessing completed successfully!")
         

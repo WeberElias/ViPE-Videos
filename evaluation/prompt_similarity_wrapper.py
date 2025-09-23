@@ -195,14 +195,18 @@ def create_combined_summary(all_findings, generation_data, output_dir, existing_
             if all_frames.get("original_average_clip_score") is not None:
                 all_frames_scores["original"].append(all_frames["original_average_clip_score"])
                 all_frames_scores["cleaned"].append(all_frames["cleaned_average_clip_score"])
-                all_frames_scores["differences"].append(all_frames["average_score_difference"])
+                # Only append if not None
+                if all_frames.get("average_score_difference") is not None:
+                    all_frames_scores["differences"].append(all_frames["average_score_difference"])
             
             # Median frame method
             median_frames = kf.get("median_frame_method", {})
             if median_frames.get("original_average_clip_score") is not None:
                 median_scores["original"].append(median_frames["original_average_clip_score"])
                 median_scores["cleaned"].append(median_frames["cleaned_average_clip_score"])
-                median_scores["differences"].append(median_frames["average_score_difference"])
+                # Only append if not None
+                if median_frames.get("average_score_difference") is not None:
+                    median_scores["differences"].append(median_frames["average_score_difference"])
                 valid_runs += 1
         
         mode_averages[mode] = {
@@ -267,13 +271,23 @@ def print_summary_report(combined_summary):
             print("  All Frames Method:")
             print(f"    Average Original Score:  {averages['all_frames_method']['average_original_score']:.4f}")
             print(f"    Average Cleaned Score:   {averages['all_frames_method']['average_cleaned_score']:.4f}")
-            print(f"    Average Difference:      {averages['all_frames_method']['average_difference']:.4f}")
+            # Handle None values for average_difference
+            diff_value = averages['all_frames_method']['average_difference']
+            if diff_value is not None:
+                print(f"    Average Difference:      {diff_value:.4f}")
+            else:
+                print(f"    Average Difference:      N/A")
         
         if averages["median_frame_method"]["average_original_score"] is not None:
             print("  Median Frame Method:")
             print(f"    Average Original Score:  {averages['median_frame_method']['average_original_score']:.4f}")
             print(f"    Average Cleaned Score:   {averages['median_frame_method']['average_cleaned_score']:.4f}")
-            print(f"    Average Difference:      {averages['median_frame_method']['average_difference']:.4f}")
+            # Handle None values for average_difference
+            diff_value = averages['median_frame_method']['average_difference']
+            if diff_value is not None:
+                print(f"    Average Difference:      {diff_value:.4f}")
+            else:
+                print(f"    Average Difference:      N/A")
         else:
             print("  No valid evaluations for this mode")
     
@@ -298,12 +312,47 @@ def print_summary_report(combined_summary):
                 # All frames results
                 all_frames = kf.get("all_frames_method", {})
                 if all_frames.get("original_average_clip_score") is not None:
-                    print(f"    All Frames - Original: {all_frames['original_average_clip_score']:.4f}, Cleaned: {all_frames['cleaned_average_clip_score']:.4f}, Diff: {all_frames['average_score_difference']:.4f}")
+                    diff_val = all_frames.get('average_score_difference')
+                    diff_str = f"{diff_val:.4f}" if diff_val is not None else "N/A"
+                    print(f"    All Frames - Original: {all_frames['original_average_clip_score']:.4f}, Cleaned: {all_frames['cleaned_average_clip_score']:.4f}, Diff: {diff_str}")
                 
                 # Median frame results
                 median_frames = kf.get("median_frame_method", {})
                 if median_frames.get("original_average_clip_score") is not None:
-                    print(f"    Median Frame - Original: {median_frames['original_average_clip_score']:.4f}, Cleaned: {median_frames['cleaned_average_clip_score']:.4f}, Diff: {median_frames['average_score_difference']:.4f}")
+                    diff_val = median_frames.get('average_score_difference')
+                    diff_str = f"{diff_val:.4f}" if diff_val is not None else "N/A"
+                    print(f"    Median Frame - Original: {median_frames['original_average_clip_score']:.4f}, Cleaned: {median_frames['cleaned_average_clip_score']:.4f}, Diff: {diff_str}")
+
+def update_quartiles_for_existing_results(stamp):
+    """Update existing results with quartiles without recalculating everything"""
+    print(f"\n{'='*60}")
+    print(f"UPDATING QUARTILES FOR: {stamp}")
+    print(f"{'='*60}")
+    
+    # Get the directory of the current script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    prompt_similarity_script = os.path.join(script_dir, "prompt_similarity.py")
+    
+    if not os.path.exists(prompt_similarity_script):
+        raise FileNotFoundError(f"prompt_similarity.py not found at: {prompt_similarity_script}")
+    
+    try:
+        # Run the prompt similarity script with --update-quartiles-only flag
+        cmd = [sys.executable, prompt_similarity_script, "--stamp", stamp, "--update-quartiles-only"]
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=script_dir)
+        
+        if result.returncode != 0:
+            print(f"Error updating quartiles for {stamp}:")
+            print(f"STDOUT: {result.stdout}")
+            print(f"STDERR: {result.stderr}")
+            return False
+        
+        print(f"Successfully updated quartiles for {stamp}")
+        return True
+            
+    except Exception as e:
+        print(f"Exception updating quartiles for {stamp}: {e}")
+        return False
 
 def main():
     """Main function to run prompt similarity evaluation for all relevant runs"""
@@ -313,6 +362,8 @@ def main():
                       help='Method to use for evaluation: all (all frames), median (median frame), or both')
     parser.add_argument('--output-dir', help='Output directory for combined summary (default: same directory as summary file)')
     parser.add_argument('--force-rerun', action='store_true', help='Force re-evaluation of all runs, even if already evaluated')
+    parser.add_argument('--update-quartiles-only', action='store_true', 
+                      help='Only update existing results with quartiles, do not run new evaluations')
     
     args = parser.parse_args()
     
@@ -327,6 +378,31 @@ def main():
         
         if not relevant_runs:
             print("No relevant runs found. Exiting.")
+            return
+        
+        # If only updating quartiles, do that and exit
+        if args.update_quartiles_only:
+            print(f"\nUpdating quartiles for {len(relevant_runs)} existing results...")
+            successful_updates = 0
+            failed_updates = 0
+            
+            for i, run in enumerate(relevant_runs, 1):
+                stamp = run["stamp"]
+                print(f"\nProcessing run {i}/{len(relevant_runs)}: {run['name']} ({stamp})")
+                
+                success = update_quartiles_for_existing_results(stamp)
+                if success:
+                    successful_updates += 1
+                else:
+                    failed_updates += 1
+            
+            print(f"\n{'='*60}")
+            print(f"QUARTILES UPDATE COMPLETED")
+            print(f"{'='*60}")
+            print(f"Total runs processed: {len(relevant_runs)}")
+            print(f"Successful updates: {successful_updates}")
+            print(f"Failed updates: {failed_updates}")
+            
             return
         
         # Set output directory
